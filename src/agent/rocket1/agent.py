@@ -6,8 +6,8 @@ from typing import Any, Dict, Tuple
 import torch
 
 from agent.base import BaseAgent, AgentState
-from model import ActionPayload
-from preprocess import build_rocket_input, decode_rocket_action
+from .model import ActionPayload
+from .preprocess import build_rocket_input, decode_rocket_action
 
 # MineStudio RocketPolicy loader (당신이 제공한 minestudio 코드 기준)
 from minestudio.models.rocket_one.body import RocketPolicy as MineStudioRocketPolicy
