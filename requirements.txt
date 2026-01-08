@@ -1,0 +1,13 @@
+a2a-python
+uvicorn
+pydantic
+httpx
+pytest
+pytest-asyncio
+numpy
+torch
+minestudio
+huggingface_hub
+a2a-sdk
+fastapi
+
