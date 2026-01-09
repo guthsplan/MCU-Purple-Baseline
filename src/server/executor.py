@@ -1,8 +1,14 @@
+# src/server/executor.py
 from __future__ import annotations
 
-import json
 import base64
+import json
+import logging
+import math
+import time
+
 from uuid import uuid4
+from typing import Any, Dict, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -10,200 +16,454 @@ import numpy as np
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import Message, Part, Role, TextPart
+from a2a.types import Message, TextPart
 from a2a.utils import new_agent_text_message
-from a2a.utils.errors import ServerError
 
 from src.server.session_manager import SessionManager
-from src.protocol.models import (
-    InitPayload,
-    ObservationPayload,
-    AckPayload,
-    ActionPayload,
-)
-
+from src.protocol.models import InitPayload, ObservationPayload
 from src.agent.noop import NoOpAgent
 from src.agent.rocket1.agent import Rocket1Agent
 from src.agent.base import AgentState
 
 
+logger = logging.getLogger("purple.executor")
+logger.setLevel(logging.INFO)
+
+
 class Executor(AgentExecutor):
     """
-    Purple AgentExecutor
+    Purple agent executor for MCU benchmark.
 
-    - init / obs 메시지 처리
-    - NoOp 또는 Rocket-1 policy 호출
-    - ActionPayload 반환
+    Responsibilities:
+      - Parse A2A Message(TextPart JSON) into Init/Obs payloads
+      - Maintain session metadata via SessionManager (context_id keyed)
+      - Maintain per-context policy recurrent state (AgentState) for Rocket-1
+      - Always respond via TaskUpdater.complete() with a JSON string:
+          - ack: {"type":"ack","success":...,"message":...}
+          - action: {"type":"action","buttons":[...],"camera":[...]}
     """
 
-    def __init__(self, sessions: SessionManager, agent_name: str = "noop"):
+    def __init__(self, sessions: SessionManager, agent_name: str = "noop",*,
+        action_buttons_threshold: float = 0.5,
+        state_ttl_seconds: Optional[int] = 60 * 60,
+        decode_expect_rgb: bool = True,) -> None:
+
         self.sessions = sessions
+        self.agent_name = agent_name
+        self._buttons_threshold = float(action_buttons_threshold)
+        self._state_ttl_seconds = state_ttl_seconds
+        self._decode_expect_rgb = bool(decode_expect_rgb)
 
         if agent_name == "noop":
-            self.agent = NoOpAgent()
             self.mode = "noop"
-
-        elif agent_name == "rocket1":
-            self.agent = Rocket1Agent()
-            self.mode = "rocket1"
-            # context_id -> AgentState (Rocket recurrent memory)
+            self.agent = NoOpAgent()
             self.agent_states: dict[str, AgentState] = {}
-
+        elif agent_name == "rocket1":
+            self.mode = "rocket1"
+            self.agent = Rocket1Agent()
+            self.agent_states = {}
         else:
             raise ValueError(f"Unknown agent name: {agent_name}")
 
-    # ---------------- main entry ----------------
+        # Rocket-1 per-context AgentState
+        self.agent_states: dict[str, AgentState] = {}
+        # Track when each agent state was last touched
+        self._agent_state_touched_at: dict[str, float] = {}
+
+    # ---------------- A2A helpers ----------------
+
+    def _get_task_id(self, context: RequestContext) -> Optional[str]:
+        """
+        Extract task ID from RequestContext.
+        """
+        task = getattr(context, "current_task", None) or getattr(context, "task", None)
+        if task is not None:
+            tid = getattr(task, "id", None)
+            if isinstance(tid, str) and tid:
+                return tid
+
+        for k in ("task_id", "current_task_id"):
+            v = getattr(context, k, None)
+            if isinstance(v, str) and v:
+                return v
+
+        return None
+
+    def _get_message_and_context_id(self, context: RequestContext) -> Tuple[Optional[Message], str]:
+        """
+        Extract Message and context_id from RequestContext. 
+        If context_id is missing, generate a new random one.
+        """
+        msg = getattr(context, "message", None)
+        
+        ctx_id = None
+        if msg is not None:
+            ctx_id = getattr(msg, "context_id", None) or getattr(msg, "contextId", None)
+
+        context_id = ctx_id if isinstance(ctx_id, str) and ctx_id else uuid4().hex
+        return msg, context_id
+
+    def _extract_text(self, msg: Message) -> Optional[str]:
+        """
+        Extract TextPart payload from message.parts
+        """
+        parts = getattr(msg, "parts", None)
+
+        if isinstance(parts, list):
+            for part in parts:
+                root = getattr(part, "root", None)
+
+                if isinstance(root, TextPart):
+                    text = getattr(root, "text", None)
+                    if isinstance(text, str) and text.strip():
+                        return text
+                    
+                if isinstance(part, TextPart):
+                    text = getattr(part, "text", None)
+                    if isinstance(text, str) and text.strip():
+                        return text
+                    
+                if isinstance(root, dict) and isinstance(root.get("text"), str) and root["text"].strip():
+                    return root["text"]
+                
+                if isinstance(part, dict) and isinstance(part.get("text"), str) and part["text"].strip():
+                    return part["text"]
+                
+                text_attr = getattr(part, "text", None)
+                if isinstance(text_attr, str) and text_attr.strip():
+                    return text_attr
+
+        for attr in ("text", "content", "body"):
+            v = getattr(msg, attr, None)
+            if isinstance(v, str) and v.strip():
+                return v
+
+        return None
+
+    def _decode_obs(self, obs_base64: str) -> np.ndarray:
+        """
+        Docstring for _decode_obs
+        
+        :param self: Description
+        :param obs_base64: Description
+        :type obs_base64: str
+        :return: Description
+        :rtype: Any
+        """ 
+        # strip data URI prefix if present
+        if obs_base64.startswith("data:"):
+            obs_base64 = obs_base64.split("base64,", 1)[-1]
+
+        # base64 decode
+        try:
+            img_bytes = base64.b64decode(obs_base64)
+        except Exception as e:
+            raise ValueError(f"Invalid base64 image payload: {e}") from e
+
+        # numpy frombuffer
+        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+
+        # OpenCV decode (BGR)
+        img_bgr = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        if img_bgr is None:
+            raise ValueError("cv2.imdecode failed (invalid or corrupted image bytes)")
+
+        # BGR -> RGB
+        img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+        # enforce shape & dtype
+        if img.ndim != 3 or img.shape[2] != 3:
+            raise ValueError(f"Decoded image must be HxWx3, got shape={img.shape}")
+
+        if img.dtype != np.uint8:
+            img = img.astype(np.uint8, copy=False)
+
+        return img
+    
+    def _strip_data_uri_prefix(self, s: str) -> str:
+        """
+        Allow obs like 'data:image/png;base64,AAAA...' by stripping the prefix.
+        """
+        if not isinstance(s, str):
+            return s
+        marker = "base64,"
+        if s.startswith("data:") and marker in s:
+            return s.split(marker, 1)[1]
+        return s
+    
+    async def _complete_json(self, updater: TaskUpdater, payload_obj: Dict[str, Any]) -> None:
+        """
+        Always complete task with a JSON-string response so evaluator/ToolProvider can json.loads().
+        """
+        text = json.dumps(payload_obj, ensure_ascii=False)
+        await updater.complete(new_agent_text_message(text))
+
+    def _touch_agent_state(self, context_id: str) -> None:
+        self._agent_state_touched_at[context_id] = time.time()
+
+
+    def _gc_agent_states(self) -> None:
+        """
+        GC stale agent_states to avoid memory leak in long-running servers.
+        Mirrors SessionManager TTL concept, but independently maintained.
+        """
+        if self._state_ttl_seconds is None:
+            return
+        now = time.time()
+        dead = [
+            cid for cid, ts in self._agent_state_touched_at.items()
+            if (now - ts) > self._state_ttl_seconds
+        ]
+        for cid in dead:
+            self._agent_state_touched_at.pop(cid, None)
+            self.agent_states.pop(cid, None)
+
+
+    def _normalize_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize and validate action dict to:
+        """
+        if not isinstance(action, dict):
+            raise ValueError(f"action must be dict, got {type(action)}")
+
+        buttons = action.get("buttons", [])
+        camera = action.get("camera", [])
+
+        # ---- buttons ----
+        if hasattr(buttons, "detach"):  # torch tensor
+            buttons = buttons.detach().cpu().reshape(-1).tolist()
+        elif isinstance(buttons, np.ndarray):
+            buttons = buttons.reshape(-1).tolist()
+
+        if not isinstance(buttons, list):
+            raise ValueError(f"buttons must be a list-like, got {type(buttons)}")
+
+        buttons_int: list[int] = []
+        for i, b in enumerate(buttons):
+            # bool
+            if isinstance(b, (bool, np.bool_)):
+                buttons_int.append(1 if bool(b) else 0)
+                continue
+
+            # int
+            if isinstance(b, (int, np.integer)):
+                buttons_int.append(1 if int(b) != 0 else 0)
+                continue
+
+            # float-like
+            if isinstance(b, (float, np.floating)):
+                bf = float(b)
+                if not math.isfinite(bf):
+                    buttons_int.append(0)
+                    continue
+
+                # probability-style in [0,1]
+                if 0.0 <= bf <= 1.0:
+                    buttons_int.append(1 if bf >= self._buttons_threshold else 0)
+                else:
+                    # logits / real-valued
+                    buttons_int.append(1 if bf > 0.0 else 0)
+                continue
+
+            # fallback: attempt numeric cast
+            try:
+                bf = float(b)
+                if not math.isfinite(bf):
+                    buttons_int.append(0)
+                elif 0.0 <= bf <= 1.0:
+                    buttons_int.append(1 if bf >= self._buttons_threshold else 0)
+                else:
+                    buttons_int.append(1 if bf > 0.0 else 0)
+            except Exception as e:
+                raise ValueError(f"buttons[{i}] has unsupported type {type(b)}: {e}") from e
+
+        if len(buttons_int) != 20:
+            raise ValueError(f"buttons must have length 20, got {len(buttons_int)}")
+
+        # ---- camera ----
+        if hasattr(camera, "detach"):  # torch tensor
+            camera = camera.detach().cpu().reshape(-1).tolist()
+        elif isinstance(camera, np.ndarray):
+            camera = camera.reshape(-1).tolist()
+
+        if not isinstance(camera, list):
+            raise ValueError(f"camera must be a list-like, got {type(camera)}")
+        if len(camera) != 2:
+            raise ValueError(f"camera must have length 2, got {len(camera)}")
+
+        try:
+            camera_f = [float(camera[0]), float(camera[1])]
+        except Exception as e:
+            raise ValueError(f"camera entries must be float-castable: {e}") from e
+
+        # sanitize non-finite values
+        for j in range(2):
+            if not math.isfinite(camera_f[j]):
+                camera_f[j] = 0.0
+
+        return {"buttons": buttons_int, "camera": camera_f}
+
+    
+
+    # ---------------- A2A entrypoints ----------------
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        msg: Message | None = context.message
-        if msg is None:
-            raise ServerError("No message in request context")
+        """
+        Execute Purple agent logic for the given RequestContext.
+        """
+        self._gc_agent_states()
 
-        context_id = msg.context_id or uuid4().hex
+        task_id = self._get_task_id(context)
+        msg, context_id = self._get_message_and_context_id(context)
 
-        # 1) extract TextPart
-        payload_text = self._extract_text(msg)
-        if payload_text is None:
-            await self._fail(
-                updater=TaskUpdater(event_queue, context.current_task.id, context_id),
-                reason="Missing TextPart payload",
-            )
+        # ignore if no task_id
+        if not task_id:
+            logger.warning(
+                    "RequestContext has no task id; ignoring. "
+                    "type(context)=%s has_message=%s context_id=%s",
+                    type(context),
+                    msg is not None,
+                    context_id,
+                )
             return
 
-        # 2) parse JSON
+        updater = TaskUpdater(event_queue, task_id, context_id)
+
         try:
-            payload_obj = json.loads(payload_text)
-        except Exception:
-            await self._respond(
-                event_queue,
-                context_id,
-                AckPayload(success=False, message="Payload is not valid JSON"),
-            )
-            return
-
-        payload_type = payload_obj.get("type")
-
-        # ---------------- init ----------------
-        if payload_type == "init":
-            try:
-                init = InitPayload.model_validate(payload_obj)
-            except Exception as e:
-                await self._respond(
-                    event_queue,
-                    context_id,
-                    AckPayload(success=False, message=f"Invalid init payload: {e}"),
+            if msg is None:
+                await self._complete_json(
+                    updater,
+                    {"type": "ack", "success": False, "message": "No message in request context"},
                 )
                 return
 
-            self.sessions.start_new_task(
-                context_id=context_id,
-                task_text=init.text,
-            )
-
-            # Rocket-1: reset recurrent state
-            if self.mode == "rocket1":
-                self.agent.reset()
-                self.agent_states[context_id] = AgentState(memory=None, first=True)
-
-            await self._respond(
-                event_queue,
-                context_id,
-                AckPayload(
-                    success=True,
-                    message=f"Initialization success with task: {init.text}",
-                ),
-            )
-            return
-
-        # ---------------- obs ----------------
-        if payload_type == "obs":
-            try:
-                obs = ObservationPayload.model_validate(payload_obj)
-            except Exception as e:
-                await self._respond(
-                    event_queue,
-                    context_id,
-                    AckPayload(success=False, message=f"Invalid obs payload: {e}"),
+            payload_text = self._extract_text(msg)
+            if payload_text is None:
+                await self._complete_json(
+                    updater,
+                    {"type": "ack", "success": False, "message": "Missing TextPart payload"},
                 )
                 return
 
-            session = self.sessions.on_observation(context_id, obs.step)
-
-            # ---------- NoOp ----------
-            if self.mode == "noop":
-                action_dict = self.agent.act(
-                    obs_base64=obs.obs,
-                    session=session,
+            try:
+                payload_obj = json.loads(payload_text)
+            except Exception as e:
+                await self._complete_json(
+                    updater,
+                    {"type": "ack", "success": False, "message": f"Payload is not valid JSON: {e}"},
                 )
+                return
 
-            # ---------- Rocket-1 ----------
-            else:
-                image = self._decode_obs(obs.obs)
+            payload_type = payload_obj.get("type", None)
 
-                obs_dict = {
-                    "image": image,
-                    # segment 없음 → preprocess에서 zero-mask 자동 처리
-                }
+            # ---------------- init ----------------
+            if payload_type == "init":
+                try:
+                    init = InitPayload.model_validate(payload_obj)
+                except Exception as e:
+                    await self._complete_json(
+                        updater,
+                        {"type": "ack", "success": False, "message": f"Invalid init payload: {e}"},
+                    )
+                    return
 
-                state = self.agent_states.get(context_id)
-                if state is None:
-                    state = AgentState(memory=None, first=True)
+                # session initialization
+                self.sessions.start_new_task(context_id=context_id, task_text=init.text)
 
-                action_dict, new_state = self.agent.act(
-                    obs=obs_dict,
-                    state=state,
-                    deterministic=True,
+                # rocket-1 agent initialization
+                if self.mode == "rocket1":
+                    self.agent.reset()
+                    self.agent_states[context_id] = AgentState(memory=None, first=True)
+                    self._touch_agent_state(context_id)
+                
+                await self._complete_json(
+                    updater,
+                    {"type": "ack", "success": True, "message": f"Initialization success with task: {init.text}"},
                 )
+                return
 
-                self.agent_states[context_id] = new_state
+            # ---------------- obs ----------------
+            if payload_type == "obs":
+                try:
+                    obs = ObservationPayload.model_validate(payload_obj)
+                except Exception as e:
+                    await self._complete_json(
+                        updater,
+                        {"type": "ack", "success": False, "message": f"Invalid obs payload: {e}"},
+                    )
+                    return
 
-            await self._respond(
-                event_queue,
-                context_id,
-                ActionPayload(
-                    buttons=action_dict["buttons"],
-                    camera=action_dict["camera"],
-                ),
+                session = self.sessions.on_observation(context_id, obs.step)
+                
+                # NoOp
+                if self.mode == "noop":
+                    action_dict = self.agent.act(obs_base64=obs.obs, session=session)
+
+                # Rocket-1
+                else:
+                    try:
+                        image = self._decode_obs(obs.obs)
+                    except Exception as e:
+                        await self._complete_json(
+                            updater,
+                            {"type": "ack", "success": False, "message": f"Failed to decode obs image: {e}"},
+                        )
+                        return
+
+                    obs_dict: Dict[str, Any] = {"image": image}
+                    state = self.agent_states.get(context_id) or AgentState(memory=None, first=True)
+
+                    try:
+                        action_dict, new_state = self.agent.act(
+                            obs=obs_dict,
+                            state=state,
+                            deterministic=True,
+                        )
+                    except Exception as e:
+                        await self._complete_json(
+                            updater,
+                            {"type": "ack", "success": False, "message": f"Agent policy error: {e}"},
+                        )
+                        return
+
+                    self.agent_states[context_id] = new_state
+                    self._touch_agent_state(context_id)
+
+                try:
+                    action_dict = self._normalize_action(action_dict)
+                except Exception as e:
+                    await self._complete_json(
+                        updater,
+                        {"type": "ack", "success": False, "message": f"Invalid action format: {e}"},
+                    )
+                    return
+                
+                await self._complete_json(
+                    updater,
+                    {
+                        "type": "action",
+                        "buttons": action_dict["buttons"],
+                        "camera": action_dict["camera"],
+                    },
+                )
+                return
+
+            # ---------------- unknown ----------------
+            await self._complete_json(
+                updater,
+                {"type": "ack", "success": False, "message": f"Unknown payload type: {payload_type}"},
             )
-            return
 
-        # ---------------- unknown ----------------
-        await self._respond(
-            event_queue,
-            context_id,
-            AckPayload(success=False, message=f"Unknown payload type: {payload_type}"),
-        )
+        except Exception as e:
+            """Catch-all for unexpected errors."""
+            try:
+                await self._complete_json(
+                    updater,
+                    {"type": "ack", "success": False, "message": f"Unhandled server error: {e}"},
+                )
+            except Exception:
+                await updater.failed(new_agent_text_message(f"Fatal error: {e}"))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         # Purple agent does not support cancellation
         return
-
-    # ---------------- helpers ----------------
-
-    def _extract_text(self, msg: Message) -> str | None:
-        for part in msg.parts:
-            if isinstance(part.root, TextPart):
-                return part.root.text
-        return None
-
-    def _decode_obs(self, obs_base64: str) -> np.ndarray:
-        """base64 jpeg/png -> RGB numpy image"""
-        img_bytes = base64.b64decode(obs_base64)
-        img_array = np.frombuffer(img_bytes, np.uint8)
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-        if img is None:
-            raise ValueError("Failed to decode base64 image")
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        return img
-
-    async def _respond(self, event_queue: EventQueue, context_id: str, payload) -> None:
-        msg = Message(
-            role=Role.agent,
-            parts=[Part(root=TextPart(text=payload.model_dump_json()))],
-            message_id=uuid4().hex,
-            context_id=context_id,
-        )
-        await event_queue.enqueue_event(msg)
-
-    async def _fail(self, updater: TaskUpdater, reason: str) -> None:
-        await updater.failed(new_agent_text_message(reason))

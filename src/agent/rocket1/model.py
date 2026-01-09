@@ -1,4 +1,3 @@
-# model.py
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Literal
@@ -8,12 +7,9 @@ from pydantic import BaseModel, Field, model_validator
 
 class ObsPayload(BaseModel):
     """Observation payload that Purple receives from Green.
-
-    Minimal contract:
-      - image: HxWx3 uint8 OR already as nested lists
-      - optional segment: obj_mask (HxW), obj_id (int)
+    MUST contain:
+      image: HxWx3 uint8 array-like
     """
-
     image: Any = Field(..., description="RGB image, typically HxWx3 uint8 array-like")
     segment: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -37,7 +33,6 @@ class ObsPayload(BaseModel):
 
 class ActionPayload(BaseModel):
     """Action payload Purple returns to Green.
-
     MUST be:
       buttons: length 20, int {0,1}
       camera: length 2, float
@@ -47,6 +42,9 @@ class ActionPayload(BaseModel):
 
     @model_validator(mode="after")
     def _validate_shapes(self):
+        """
+        Validate action shapes and types.
+        """ 
         if len(self.buttons) != 20:
             raise ValueError("buttons must have length 20 (MineRL/VPT standard).")
         if any((b not in (0, 1)) for b in self.buttons):
@@ -59,13 +57,13 @@ class ActionPayload(BaseModel):
 
 
 class StepResult(BaseModel):
-    """Optional: what Purple could log/return internally."""
+    """ Result of a single step from Purple agent."""
     action: ActionPayload
     info: Dict[str, Any] = Field(default_factory=dict)
 
 
 class SamplingMode(str):
-    """helper literal-ish"""
+    """Sampling mode for action selection."""
     pass
 
 

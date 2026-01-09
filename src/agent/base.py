@@ -8,8 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
-
-# MineRL/VPT 표준 버튼 순서 (절대 변경 금지)
+# Button order as expected by MineRL/VPT standard
 BUTTONS_ORDER: Tuple[str, ...] = (
     "attack",
     "back",
@@ -62,10 +61,12 @@ class BaseAgent(ABC):
     def device(self) -> torch.device:
         return self._device
 
+    # Validate action dict
     def validate_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        # Normalize and validate action dict structure and types.
         if "buttons" not in action or "camera" not in action:
             raise ValueError("Action must contain keys: 'buttons', 'camera'.")
-
+    
         buttons = action["buttons"]
         camera = action["camera"]
 
@@ -85,6 +86,7 @@ class BaseAgent(ABC):
         if not isinstance(camera, (list, tuple)) or len(camera) != 2:
             raise ValueError("'camera' must be a list/tuple of length 2: [dx, dy].")
 
+        # normalize camera to float
         dx, dy = camera
         dx = float(dx)
         dy = float(dy)

@@ -3,50 +3,50 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 import time
-
+import threading
 
 @dataclass
 class SessionState:
     """
-    Purple 쪽 session state.
-    - session key = context_id (A2A message의 contextId)
-    - Green은 task 시작 시 init payload를 보내고, 이후 obs를 같은 context_id로 계속 보낸다.
+    Single session state for a context_id.
     """
-
+    # identification
     context_id: str
+
+    # timestamps
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
-    # init에서 설정되는 task 설명 텍스트
+    # task info
     task_text: Optional[str] = None
     task_started_at: Optional[float] = None
 
-    # obs 흐름에서 추적
+    # observation tracking
     last_step: int = -1
+    last_step_received: int = -1      
     num_obs: int = 0
+    num_step_regressions: int = 0 
 
-    # MineStudio/Minecraft action space는 Purple이 직접 env를 안 돌리므로 확정 불가.
-    # 따라서 기본값(또는 config)로 세션마다 "기대 shape"를 보관해서 일관성 유지.
-    expected_num_buttons: int = 20   # MineRL 계열에서 흔히 20 전후. 필요시 config로 덮어씀.
-    expected_camera_dims: int = 2    # camera는 일반적으로 (dx, dy) 2차원.
+    # expected action shapes
+    expected_num_buttons: int = 20   
+    expected_camera_dims: int = 2    
 
+    # update timestamp
     def touch(self) -> None:
         self.updated_at = time.time()
 
 
 class SessionManager:
     """
-    context_id -> SessionState 매핑.
-
-    설계 원칙:
-    - init을 받으면 "새 task 시작"으로 보고 session을 task 단위로 reset한다.
-    - obs step이 역행하더라도 baseline 안정성을 위해 hard-fail 하지 않고 기록만 갱신한다.
+    Manage multiple SessionState instances by context_id.
     """
 
     def __init__(self, *, ttl_seconds: Optional[int] = 60 * 60) -> None:
         self._sessions: Dict[str, SessionState] = {}
         self._ttl_seconds = ttl_seconds
+        self._lock = threading.RLock()
 
+    # Get or create session by context_id
     def get_or_create(self, context_id: str) -> SessionState:
         self._gc_if_needed()
 
@@ -57,6 +57,7 @@ class SessionManager:
         s.touch()
         return s
 
+    # Start a new task for the given context_id
     def start_new_task(
         self,
         context_id: str,
@@ -66,16 +67,18 @@ class SessionManager:
         expected_camera_dims: Optional[int] = None,
     ) -> SessionState:
         """
-        init payload 수신 시 호출.
-        같은 context_id라도 새로운 init은 "새 task"로 보고 상태를 리셋한다.
+        initialize a new task session.
         """
         s = self.get_or_create(context_id)
 
         # reset task-related fields
         s.task_text = task_text
         s.task_started_at = time.time()
+
         s.last_step = -1
+        s.last_step_received = -1
         s.num_obs = 0
+        s.num_step_regressions = 0
 
         # allow overrides (from config or runtime)
         if expected_num_buttons is not None:
@@ -88,30 +91,57 @@ class SessionManager:
 
     def on_observation(self, context_id: str, step: int) -> SessionState:
         """
-        obs payload 수신 시 호출.
-        step 역행은 기록만 하고 진행 (baseline 안정성 우선).
+        observation received for the given context_id at step.
+        Updates session state accordingly.
         """
-        s = self.get_or_create(context_id)
-        s.num_obs += 1
-        if step > s.last_step:
-            s.last_step = step
-        s.touch()
-        return s
+        self._validate_context_id(context_id)
+
+        try:
+            step_i = int(step)
+        except Exception:
+            raise ValueError(f"Invalid step value: {step!r}")
+
+        with self._lock:
+            s = self.get_or_create(context_id)
+
+            s.num_obs += 1
+            s.last_step_received = step_i
+
+            if step_i < s.last_step:
+                s.num_step_regressions += 1
+            else:
+                s.last_step = step_i
+
+            s.touch()
+            return s
 
     def reset(self, context_id: str) -> None:
         """
-        필요 시 외부에서 강제 초기화.
+        reset session state for the given context_id.
         """
-        s = self.get_or_create(context_id)
-        s.task_text = None
-        s.task_started_at = None
-        s.last_step = -1
-        s.num_obs = 0
-        s.touch()
+        self._validate_context_id(context_id)
 
+        with self._lock:
+            s = self.get_or_create(context_id)
+
+            s.task_text = None
+            s.task_started_at = None
+            s.last_step = -1
+            s.last_step_received = -1
+            s.num_obs = 0
+            s.num_step_regressions = 0
+
+            s.touch()
+
+    # Validate context_id
+    def _validate_context_id(self, context_id: str) -> None:
+        if not isinstance(context_id, str) or not context_id:
+            raise ValueError(f"Invalid context_id: {context_id!r}")
+        
+    # Garbage-collect expired sessions
     def _gc_if_needed(self) -> None:
         """
-        메모리 누수 방지: 오래된 세션 정리.
+        garbage-collect expired sessions.
         """
         if self._ttl_seconds is None:
             return
