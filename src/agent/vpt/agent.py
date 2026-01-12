@@ -63,8 +63,9 @@ class VPTAgent(BaseAgent):
         """
         return
 
-    def initial_state(self) -> VPTState:
+    def initial_state(self, task_text: Optional[str] = None) -> VPTState:
         return VPTState(memory=None, first=True)
+
 
     @torch.inference_mode()
     def act(

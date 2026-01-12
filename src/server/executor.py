@@ -343,17 +343,10 @@ class Executor(AgentExecutor):
             if payload_type == "init":
                 init = InitPayload.model_validate(payload_obj)
 
-                # session initialization
                 self.sessions.start_new_task(context_id=context_id, task_text=init.text)
 
-                # initialize agent state for all agents
-                if hasattr(self.agent, "initial_state"):
-                    # STEVE-1
-                    state = self.agent.initial_state(init.text)
-                else:
-                    # VPT / Rocket-1
-                    self.agent.reset()
-                    state = AgentState(memory=None, first=True)
+                self.agent.reset()
+                state = self.agent.initial_state(init.text)
 
                 self.agent_states[context_id] = state
                 self._touch_agent_state(context_id)

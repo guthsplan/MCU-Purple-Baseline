@@ -59,7 +59,11 @@ class BaseAgent(ABC):
     @property
     def device(self) -> torch.device:
         return self._device
-
+    
+    # Initialize per-context agent state
+    def initial_state(self, task_text: Optional[str] = None) -> AgentState:
+        return AgentState(memory=None, first=True)
+    
     # Validate action dict
     def validate_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
         # Normalize and validate action dict structure and types.
