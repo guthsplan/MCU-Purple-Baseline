@@ -1,4 +1,3 @@
-# src/server/executor.py
 from __future__ import annotations
 
 import base64
@@ -21,10 +20,8 @@ from a2a.utils import new_agent_text_message
 
 from src.server.session_manager import SessionManager
 from src.protocol.models import InitPayload, ObservationPayload
-from src.agent.noop import NoOpAgent
-from src.agent.rocket1.agent import Rocket1Agent
+from src.agent.registry import build_agent
 from src.agent.base import AgentState
-
 
 logger = logging.getLogger("purple.executor")
 logger.setLevel(logging.INFO)
@@ -43,7 +40,11 @@ class Executor(AgentExecutor):
           - action: {"type":"action","buttons":[...],"camera":[...]}
     """
 
-    def __init__(self, sessions: SessionManager, agent_name: str = "noop",*,
+    def __init__(
+        self, 
+        sessions: SessionManager, 
+        agent_name: str,
+        *,
         action_buttons_threshold: float = 0.5,
         state_ttl_seconds: Optional[int] = 60 * 60,
         decode_expect_rgb: bool = True,) -> None:
@@ -52,22 +53,12 @@ class Executor(AgentExecutor):
         self.agent_name = agent_name
         self._buttons_threshold = float(action_buttons_threshold)
         self._state_ttl_seconds = state_ttl_seconds
+        # Currently all agents expect RGB images.
+        # This flag is reserved for future extensions.  
         self._decode_expect_rgb = bool(decode_expect_rgb)
-
-        if agent_name == "noop":
-            self.mode = "noop"
-            self.agent = NoOpAgent()
-            self.agent_states: dict[str, AgentState] = {}
-        elif agent_name == "rocket1":
-            self.mode = "rocket1"
-            self.agent = Rocket1Agent()
-            self.agent_states = {}
-        else:
-            raise ValueError(f"Unknown agent name: {agent_name}")
-
-        # Rocket-1 per-context AgentState
+        self.agent = build_agent(agent_name, device=None)
+        # per-context recurrent state
         self.agent_states: dict[str, AgentState] = {}
-        # Track when each agent state was last touched
         self._agent_state_touched_at: dict[str, float] = {}
 
     # ---------------- A2A helpers ----------------
@@ -81,7 +72,8 @@ class Executor(AgentExecutor):
             tid = getattr(task, "id", None)
             if isinstance(tid, str) and tid:
                 return tid
-
+            
+        # fallback for platform compatibility
         for k in ("task_id", "current_task_id"):
             v = getattr(context, k, None)
             if isinstance(v, str) and v:
@@ -111,6 +103,7 @@ class Executor(AgentExecutor):
 
         if isinstance(parts, list):
             for part in parts:
+
                 root = getattr(part, "root", None)
 
                 if isinstance(root, TextPart):
@@ -159,7 +152,6 @@ class Executor(AgentExecutor):
             img_bytes = base64.b64decode(obs_base64)
         except Exception as e:
             raise ValueError(f"Invalid base64 image payload: {e}") from e
-
         # numpy frombuffer
         img_array = np.frombuffer(img_bytes, dtype=np.uint8)
 
@@ -180,16 +172,7 @@ class Executor(AgentExecutor):
 
         return img
     
-    def _strip_data_uri_prefix(self, s: str) -> str:
-        """
-        Allow obs like 'data:image/png;base64,AAAA...' by stripping the prefix.
-        """
-        if not isinstance(s, str):
-            return s
-        marker = "base64,"
-        if s.startswith("data:") and marker in s:
-            return s.split(marker, 1)[1]
-        return s
+
     
     async def _complete_json(self, updater: TaskUpdater, payload_obj: Dict[str, Any]) -> None:
         """
@@ -358,24 +341,23 @@ class Executor(AgentExecutor):
 
             # ---------------- init ----------------
             if payload_type == "init":
-                try:
-                    init = InitPayload.model_validate(payload_obj)
-                except Exception as e:
-                    await self._complete_json(
-                        updater,
-                        {"type": "ack", "success": False, "message": f"Invalid init payload: {e}"},
-                    )
-                    return
+                init = InitPayload.model_validate(payload_obj)
 
                 # session initialization
                 self.sessions.start_new_task(context_id=context_id, task_text=init.text)
 
-                # rocket-1 agent initialization
-                if self.mode == "rocket1":
+                # initialize agent state for all agents
+                if hasattr(self.agent, "initial_state"):
+                    # STEVE-1
+                    state = self.agent.initial_state(init.text)
+                else:
+                    # VPT / Rocket-1
                     self.agent.reset()
-                    self.agent_states[context_id] = AgentState(memory=None, first=True)
-                    self._touch_agent_state(context_id)
-                
+                    state = AgentState(memory=None, first=True)
+
+                self.agent_states[context_id] = state
+                self._touch_agent_state(context_id)
+                            
                 await self._complete_json(
                     updater,
                     {"type": "ack", "success": True, "message": f"Initialization success with task: {init.text}"},
@@ -384,66 +366,35 @@ class Executor(AgentExecutor):
 
             # ---------------- obs ----------------
             if payload_type == "obs":
-                try:
-                    obs = ObservationPayload.model_validate(payload_obj)
-                except Exception as e:
-                    await self._complete_json(
-                        updater,
-                        {"type": "ack", "success": False, "message": f"Invalid obs payload: {e}"},
-                    )
-                    return
-
-                session = self.sessions.on_observation(context_id, obs.step)
+                obs = ObservationPayload.model_validate(payload_obj)
                 
-                # NoOp
-                if self.mode == "noop":
-                    action_dict = self.agent.act(obs_base64=obs.obs, session=session)
+                _ = self.sessions.on_observation(context_id, obs.step)
 
-                # Rocket-1
-                else:
-                    try:
-                        image = self._decode_obs(obs.obs)
-                    except Exception as e:
-                        await self._complete_json(
-                            updater,
-                            {"type": "ack", "success": False, "message": f"Failed to decode obs image: {e}"},
-                        )
-                        return
+                image = self._decode_obs(obs.obs)
+                obs_dict = {"image": image}
 
-                    obs_dict: Dict[str, Any] = {"image": image}
-                    state = self.agent_states.get(context_id) or AgentState(memory=None, first=True)
+                state = self.agent_states.get(context_id)
+                if state is None:
+                    raise RuntimeError(f"Missing agent state for context_id={context_id}")
+                    
+                action, new_state = self.agent.act(
+                    obs=obs_dict, 
+                    state=state, 
+                    deterministic=True
+                )
 
-                    try:
-                        action_dict, new_state = self.agent.act(
-                            obs=obs_dict,
-                            state=state,
-                            deterministic=True,
-                        )
-                    except Exception as e:
-                        await self._complete_json(
-                            updater,
-                            {"type": "ack", "success": False, "message": f"Agent policy error: {e}"},
-                        )
-                        return
+                self.agent_states[context_id] = new_state
+                self._touch_agent_state(context_id)
 
-                    self.agent_states[context_id] = new_state
-                    self._touch_agent_state(context_id)
+                action = self._normalize_action(action)
 
-                try:
-                    action_dict = self._normalize_action(action_dict)
-                except Exception as e:
-                    await self._complete_json(
-                        updater,
-                        {"type": "ack", "success": False, "message": f"Invalid action format: {e}"},
-                    )
-                    return
                 
                 await self._complete_json(
                     updater,
                     {
                         "type": "action",
-                        "buttons": action_dict["buttons"],
-                        "camera": action_dict["camera"],
+                        "buttons": action["buttons"],
+                        "camera": action["camera"],
                     },
                 )
                 return

@@ -17,7 +17,7 @@ def main():
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9008)
     parser.add_argument("--card-url", type=str, default=None, help="Public URL to advertise in agent card")
-    parser.add_argument("--agent", type=str, default="rocket1",choices=["rocket1", "noop"], help="Policy agent name (default: rocket1)")
+    parser.add_argument("--agent", type=str, default="vpt",choices=["noop","vpt","steve1","rocket1"], help="Policy agent name (default: vpt)")
     args = parser.parse_args()
 
     public_url = args.card_url or f"http://{args.host}:{args.port}/"
@@ -27,6 +27,7 @@ def main():
     else:
         advertise_host = "127.0.0.1" if args.host == "0.0.0.0" else args.host
         public_url = f"http://{advertise_host}:{args.port}/"
+        
     public_url = public_url.rstrip("/") + "/"
     
     skill = AgentSkill(
