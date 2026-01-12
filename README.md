@@ -169,7 +169,7 @@ MCU-Purple-Baseline/
 ├── pyproject.toml
 ├── README.md
 └── .gitignore
-
+```
 ## Notes
 
 - This repository contains only the Purple agent server.
