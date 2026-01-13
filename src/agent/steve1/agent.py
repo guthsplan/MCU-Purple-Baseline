@@ -18,10 +18,8 @@ class Steve1Agent(BaseAgent):
     """
     STEVE-1 wrapper for Purple baseline.
 
-    Mirrors long-term script usage:
-      condition = model.prepare_condition(...)
-      state_in = model.initial_state(condition, 1)
-      action, state_in = model.get_steve_action(condition, obs, state_in)
+    This implementation intentionally mirrors the *local* long-term script usage:
+        action, state_out = model.get_steve_action(condition, obs, state_in, input_shape='*')
     """
 
     def __init__(
@@ -60,19 +58,12 @@ class Steve1Agent(BaseAgent):
         return Steve1State(condition=condition, state_in=state_in, first=True)
 
     @torch.inference_mode()
-    def act(
+    def _act_impl(
         self,
-        *,
         obs: Dict[str, Any],
         state: Steve1State,
         deterministic: bool = True,
-        input_shape: str = "*",
     ) -> Tuple[Dict[str, Any], Steve1State]:
-        """
-        Compute action using STEVE-1 policy.
-        """
-        if state.condition is None or state.state_in is None:
-            raise RuntimeError("Steve1State is not initialized (missing condition/state_in)")
 
         steve_obs = build_steve1_obs(obs)
 
@@ -80,7 +71,7 @@ class Steve1Agent(BaseAgent):
             state.condition,
             steve_obs,
             state.state_in,
-            input_shape=input_shape,
+            input_shape="*",
         )
 
         new_state = Steve1State(

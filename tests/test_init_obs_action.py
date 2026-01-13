@@ -9,8 +9,9 @@ import pytest
 from a2a.client import A2ACardResolver, ClientConfig, ClientFactory
 from a2a.types import Message, Part, Role, TextPart
 
-from pydantic import BaseModel, Field
-from typing import Any, Literal
+from pydantic import BaseModel, model_validator, Field
+
+from typing import Any, Literal, Iterable, Optional
 
 
 class InitPayload(BaseModel):

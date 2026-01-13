@@ -47,17 +47,22 @@ class Executor(AgentExecutor):
         *,
         action_buttons_threshold: float = 0.5,
         state_ttl_seconds: Optional[int] = 60 * 60,
-        decode_expect_rgb: bool = True,) -> None:
+        decode_expect_rgb: bool = True,
+        debug: bool = False,
+        device: Optional[str] = None,
+        ) -> None:
 
+        # Initialize Purple agent instance
         self.sessions = sessions
         self.agent_name = agent_name
-        self._buttons_threshold = float(action_buttons_threshold)
-        self._state_ttl_seconds = state_ttl_seconds
-        # Currently all agents expect RGB images.
-        # This flag is reserved for future extensions.  
-        self._decode_expect_rgb = bool(decode_expect_rgb)
-        self.agent = build_agent(agent_name, device=None)
-        # per-context recurrent state
+        self._state_ttl_seconds = state_ttl_seconds 
+        self._debug = bool(debug)
+        self._device = device
+
+        # Per-context agent instance
+        self.agents: dict[str, Any] = {}
+
+        # Per-context recurrent state
         self.agent_states: dict[str, AgentState] = {}
         self._agent_state_touched_at: dict[str, float] = {}
 
@@ -135,13 +140,7 @@ class Executor(AgentExecutor):
 
     def _decode_obs(self, obs_base64: str) -> np.ndarray:
         """
-        Docstring for _decode_obs
-        
-        :param self: Description
-        :param obs_base64: Description
-        :type obs_base64: str
-        :return: Description
-        :rtype: Any
+        Decode base64-encoded image observation to RGB numpy array.
         """ 
         # strip data URI prefix if present
         if obs_base64.startswith("data:"):
@@ -152,15 +151,16 @@ class Executor(AgentExecutor):
             img_bytes = base64.b64decode(obs_base64)
         except Exception as e:
             raise ValueError(f"Invalid base64 image payload: {e}") from e
-        # numpy frombuffer
+        
+        # convert to numpy array
         img_array = np.frombuffer(img_bytes, dtype=np.uint8)
 
         # OpenCV decode (BGR)
         img_bgr = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         if img_bgr is None:
             raise ValueError("cv2.imdecode failed (invalid or corrupted image bytes)")
-
-        # BGR -> RGB
+        
+        # convert to RGB for downstream agents
         img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
         # enforce shape & dtype
@@ -181,6 +181,7 @@ class Executor(AgentExecutor):
         text = json.dumps(payload_obj, ensure_ascii=False)
         await updater.complete(new_agent_text_message(text))
 
+
     def _touch_agent_state(self, context_id: str) -> None:
         self._agent_state_touched_at[context_id] = time.time()
 
@@ -192,6 +193,7 @@ class Executor(AgentExecutor):
         """
         if self._state_ttl_seconds is None:
             return
+        
         now = time.time()
         dead = [
             cid for cid, ts in self._agent_state_touched_at.items()
@@ -201,92 +203,50 @@ class Executor(AgentExecutor):
             self._agent_state_touched_at.pop(cid, None)
             self.agent_states.pop(cid, None)
 
-
-    def _normalize_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Normalize and validate action dict to:
-        """
-        if not isinstance(action, dict):
-            raise ValueError(f"action must be dict, got {type(action)}")
-
-        buttons = action.get("buttons", [])
-        camera = action.get("camera", [])
-
-        # ---- buttons ----
-        if hasattr(buttons, "detach"):  # torch tensor
-            buttons = buttons.detach().cpu().reshape(-1).tolist()
-        elif isinstance(buttons, np.ndarray):
-            buttons = buttons.reshape(-1).tolist()
-
-        if not isinstance(buttons, list):
-            raise ValueError(f"buttons must be a list-like, got {type(buttons)}")
-
-        buttons_int: list[int] = []
-        for i, b in enumerate(buttons):
-            # bool
-            if isinstance(b, (bool, np.bool_)):
-                buttons_int.append(1 if bool(b) else 0)
-                continue
-
-            # int
-            if isinstance(b, (int, np.integer)):
-                buttons_int.append(1 if int(b) != 0 else 0)
-                continue
-
-            # float-like
-            if isinstance(b, (float, np.floating)):
-                bf = float(b)
-                if not math.isfinite(bf):
-                    buttons_int.append(0)
-                    continue
-
-                # probability-style in [0,1]
-                if 0.0 <= bf <= 1.0:
-                    buttons_int.append(1 if bf >= self._buttons_threshold else 0)
-                else:
-                    # logits / real-valued
-                    buttons_int.append(1 if bf > 0.0 else 0)
-                continue
-
-            # fallback: attempt numeric cast
+            agent = self.agents.pop(cid, None)
+            
             try:
-                bf = float(b)
-                if not math.isfinite(bf):
-                    buttons_int.append(0)
-                elif 0.0 <= bf <= 1.0:
-                    buttons_int.append(1 if bf >= self._buttons_threshold else 0)
-                else:
-                    buttons_int.append(1 if bf > 0.0 else 0)
-            except Exception as e:
-                raise ValueError(f"buttons[{i}] has unsupported type {type(b)}: {e}") from e
+                if agent is not None and hasattr(agent, "close"):
+                    agent.close()
+            except Exception:
+                logger.debug("Ignoring agent.close() error for cid=%s", cid, exc_info=True)
 
-        if len(buttons_int) != 20:
-            raise ValueError(f"buttons must have length 20, got {len(buttons_int)}")
 
-        # ---- camera ----
-        if hasattr(camera, "detach"):  # torch tensor
-            camera = camera.detach().cpu().reshape(-1).tolist()
-        elif isinstance(camera, np.ndarray):
-            camera = camera.reshape(-1).tolist()
+    def _get_or_create_agent(self, context_id: str) -> Any:
+        """
+        Get or create per-context agent instance.
+        """
+        agent = self.agents.get(context_id)
+        if agent is not None:
+            return agent
 
-        if not isinstance(camera, list):
-            raise ValueError(f"camera must be a list-like, got {type(camera)}")
-        if len(camera) != 2:
-            raise ValueError(f"camera must have length 2, got {len(camera)}")
-
+        agent = build_agent(self.agent_name, device=self._device)
+        # If agent exposes reset, do it on creation; otherwise ignore.
         try:
-            camera_f = [float(camera[0]), float(camera[1])]
-        except Exception as e:
-            raise ValueError(f"camera entries must be float-castable: {e}") from e
+            if hasattr(agent, "reset"):
+                agent.reset()
+        except Exception:
+            logger.debug("Ignoring agent.reset() error during creation", exc_info=True)
 
-        # sanitize non-finite values
-        for j in range(2):
-            if not math.isfinite(camera_f[j]):
-                camera_f[j] = 0.0
-
-        return {"buttons": buttons_int, "camera": camera_f}
-
+        self.agents[context_id] = agent
+        return agent
     
+    def _build_obs_dict(self, obs: ObservationPayload, image_rgb: np.ndarray) -> Dict[str, Any]:
+        """
+        Build observation dict for agent.act() from ObservationPayload and decoded image.
+        """
+        obs_dict: Dict[str, Any] = {
+            "image": image_rgb,
+            "step": getattr(obs, "step", None),
+        }
+
+        # Add optional fields if present
+        for k in ("inventory", "status", "task", "reward", "done", "info"):
+            v = getattr(obs, k, None)
+            if v is not None:
+                obs_dict[k] = v
+
+        return obs_dict
 
     # ---------------- A2A entrypoints ----------------
 
@@ -309,9 +269,9 @@ class Executor(AgentExecutor):
                     context_id,
                 )
             return
-
+        
         updater = TaskUpdater(event_queue, task_id, context_id)
-
+        
         try:
             if msg is None:
                 await self._complete_json(
@@ -345,12 +305,14 @@ class Executor(AgentExecutor):
 
                 self.sessions.start_new_task(context_id=context_id, task_text=init.text)
 
-                self.agent.reset()
-                state = self.agent.initial_state(init.text)
+                agent = self._get_or_create_agent(context_id)
+
+                # Create per-context initial state
+                state = agent.initial_state(init.text)
 
                 self.agent_states[context_id] = state
                 self._touch_agent_state(context_id)
-                            
+
                 await self._complete_json(
                     updater,
                     {"type": "ack", "success": True, "message": f"Initialization success with task: {init.text}"},
@@ -360,28 +322,23 @@ class Executor(AgentExecutor):
             # ---------------- obs ----------------
             if payload_type == "obs":
                 obs = ObservationPayload.model_validate(payload_obj)
-                
+
                 _ = self.sessions.on_observation(context_id, obs.step)
 
-                image = self._decode_obs(obs.obs)
-                obs_dict = {"image": image}
+                image_rgb = self._decode_obs(obs.obs)
+                obs_dict = self._build_obs_dict(obs, image_rgb)
+
+                agent = self._get_or_create_agent(context_id)
 
                 state = self.agent_states.get(context_id)
                 if state is None:
-                    raise RuntimeError(f"Missing agent state for context_id={context_id}")
-                    
-                action, new_state = self.agent.act(
-                    obs=obs_dict, 
-                    state=state, 
-                    deterministic=True
-                )
+                    raise RuntimeError(f"Missing agent state for context_id={context_id}. Did you receive init?")
+
+                action, new_state = agent.act(obs=obs_dict, state=state, deterministic=True)
 
                 self.agent_states[context_id] = new_state
                 self._touch_agent_state(context_id)
 
-                action = self._normalize_action(action)
-
-                
                 await self._complete_json(
                     updater,
                     {
@@ -399,14 +356,22 @@ class Executor(AgentExecutor):
             )
 
         except Exception as e:
-            """Catch-all for unexpected errors."""
+            logger.exception(
+                "Unhandled error in Executor.execute (context_id=%s, task_id=%s)",
+                context_id,
+                task_id,
+            )
+
+            fallback_action = {
+                "type": "action",
+                "buttons": [0] * 20,
+                "camera": [0.0, 0.0],
+            }
+
             try:
-                await self._complete_json(
-                    updater,
-                    {"type": "ack", "success": False, "message": f"Unhandled server error: {e}"},
-                )
+                await self._complete_json(updater, fallback_action)
             except Exception:
-                await updater.failed(new_agent_text_message(f"Fatal error: {e}"))
+                await updater.failed(new_agent_text_message("Fatal error"))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         # Purple agent does not support cancellation

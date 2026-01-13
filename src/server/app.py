@@ -11,6 +11,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from src.server.executor import Executor
 from src.server.session_manager import SessionManager
 
+from starlette.responses import PlainTextResponse
 
 def main():
     parser = argparse.ArgumentParser(description="Run the purple agent for MCU benchmark.")
@@ -18,9 +19,11 @@ def main():
     parser.add_argument("--port", type=int, default=9008)
     parser.add_argument("--card-url", type=str, default=None, help="Public URL to advertise in agent card")
     parser.add_argument("--agent", type=str, default="vpt",choices=["noop","vpt","steve1","rocket1"], help="Policy agent name (default: vpt)")
-    args = parser.parse_args()
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--state-ttl", type=int, default=60 * 60)
 
-    public_url = args.card_url or f"http://{args.host}:{args.port}/"
+    args = parser.parse_args()
 
     if args.card_url:
         public_url = args.card_url
@@ -49,8 +52,15 @@ def main():
         skills=[skill],
     )
 
-    sessions = SessionManager()
-    executor = Executor(sessions=sessions, agent_name=args.agent)
+    sessions = SessionManager(ttl_seconds=args.state_ttl)
+
+    executor = Executor(
+        sessions=sessions,
+        agent_name=args.agent,
+        debug=args.debug,
+        device=args.device,
+        state_ttl_seconds=args.state_ttl,
+    )
 
     request_handler = DefaultRequestHandler(
         agent_executor=executor,
@@ -62,7 +72,13 @@ def main():
         http_handler=request_handler,
     )
 
-    uvicorn.run(app.build(), host=args.host, port=args.port)
+    asgi_app = app.build()
+
+    @asgi_app.route("/health")
+    async def health(request):
+        return PlainTextResponse("OK")
+    
+    uvicorn.run(asgi_app, host=args.host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":

@@ -68,35 +68,21 @@ class VPTAgent(BaseAgent):
 
 
     @torch.inference_mode()
-    def act(
+    def _act_impl(
         self,
-        *,
         obs: Dict[str, Any],
-        state: Optional[VPTState] = None,
+        state: VPTState,
         deterministic: bool = True,
-        input_shape: str = "*",
     ) -> Tuple[Dict[str, Any], VPTState]:
-        """
-        Compute action using MineStudio VPTPolicy.get_action.
-
-        Args:
-          obs: dict with at least {"image": HxWx3 uint8 RGB}
-          state: VPTState holding recurrent memory (may be None)
-          deterministic: unused by get_action; kept for API consistency
-          input_shape: pass-through to MineStudio get_action (long-term script uses '*')
-
-        Returns:
-          action_dict: expected to contain {"buttons": (20,), "camera": (2,)} (tensor/np/list OK)
-          new_state: updated VPTState(memory=new_memory)
-        """
-        if state is None:
-            state = self.initial_state()
 
         vpt_obs = build_vpt_obs(obs)
 
-        # MineStudio expects obs possibly on CPU; it handles conversion internally.
-        # Keep memory as-is; do not cast unless required.
-        action, new_memory = self.model.get_action(vpt_obs, state.memory, input_shape=input_shape)
+        action, new_memory = self.model.get_action(
+            vpt_obs, state.memory, input_shape="*"
+        )
 
-        new_state = VPTState(memory=new_memory, first=False)
+        new_state = VPTState(
+            memory=new_memory,
+            first=False,
+        )
         return action, new_state

@@ -22,23 +22,15 @@ class NoOpAgent(BaseAgent):
         """
         return
 
-    def act(
+    def _act_impl(
         self,
         obs: Dict[str, Any],
         state: AgentState,
         deterministic: bool = True,
     ) -> Tuple[Dict[str, Any], AgentState]:
-        # Ignore obs and state entirely (by design)
 
         action = {
             "buttons": [0] * NUM_BUTTONS,
             "camera": [0.0, 0.0],
         }
-
-        # Validate via BaseAgent helper (keeps contract identical)
-        action = self.validate_action(action)
-
-        # State is unchanged; just clear 'first' after first step
-        new_state = AgentState(memory=None, first=False)
-
-        return action, new_state
+        return action, AgentState(memory=None, first=False)

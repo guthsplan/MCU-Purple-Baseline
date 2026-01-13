@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
-from einops import rearrange
 
 # Rocket-1 (MineStudio RocketPolicy ViT backbone) expects 224x224
 ROCKET_IMAGE_SIZE: int = 224
@@ -142,20 +141,38 @@ def build_rocket_input(
 
 
 def decode_rocket_action(rocket_action: Dict[str, torch.Tensor]) -> Dict[str, Any]:
-    """Decode MineStudio Rocket action to MineRL buttons(20)/camera(2) Python types."""
-    if "buttons" not in rocket_action or "camera" not in rocket_action:
-        raise ValueError("rocket_action must contain keys 'buttons' and 'camera'")
+    """
+    Decode MineStudio Rocket action to MineRL buttons(20)/camera(2).
 
-    buttons_t = rocket_action["buttons"].detach().cpu().reshape(-1)
-    camera_t = rocket_action["camera"].detach().cpu().reshape(-1)
+    IMPORTANT:
+    - NEVER raise here.
+    - Always return a valid action dict.
+    """
 
-    if buttons_t.numel() != 20:
-        raise ValueError(f"Buttons must have 20 elements, got {buttons_t.numel()}")
-    if camera_t.numel() != 2:
-        raise ValueError(f"Camera must have 2 elements, got {camera_t.numel()}")
-    
-    buttons = [1 if float(x) > 0 else 0 for x in buttons_t] 
-    camera = [float(camera_t[0]), float(camera_t[1])]
+    # Safe noop fallback
+    noop = {
+        "buttons": [0] * 20,
+        "camera": [0.0, 0.0],
+    }
 
-    return {"buttons": buttons, "camera": camera}
+    try:
+        if "buttons" not in rocket_action or "camera" not in rocket_action:
+            return noop
+
+        buttons_t = rocket_action["buttons"].detach().cpu().reshape(-1)
+        camera_t = rocket_action["camera"].detach().cpu().reshape(-1)
+
+        # Shape guard
+        if buttons_t.numel() != 20 or camera_t.numel() != 2:
+            return noop
+
+        buttons = [1 if float(x) > 0 else 0 for x in buttons_t]
+        camera = [float(camera_t[0]), float(camera_t[1])]
+
+        return {"buttons": buttons, "camera": camera}
+
+    except Exception:
+        # Absolute last safety net
+        return noop
+
 
