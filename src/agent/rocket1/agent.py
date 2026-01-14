@@ -52,12 +52,14 @@ class Rocket1Agent(BaseAgent):
         state: AgentState,
         deterministic: bool = True,
     ) -> Tuple[Dict[str, Any], AgentState]:
+        logger.debug("[Rocket1] step start, first=%s", state.first)
+        if deterministic is None:
+            deterministic = self.deterministic_default
 
         rocket_in = build_rocket_input(obs, device=self.device)
         rocket_in.first[:] = torch.tensor([[bool(state.first)]], device=self.device)
-
         rocket_in.input_dict["first"] = rocket_in.first
-        
+
         latents, new_memory = self.model(
             input=rocket_in.input_dict,
             memory=state.memory,
@@ -78,4 +80,11 @@ class Rocket1Agent(BaseAgent):
             memory=new_memory,
             first=False,
         )
+
+        logger.debug(
+            "[Rocket1] action buttons_sum=%d camera=%s",
+            sum(action["buttons"]),
+            action["camera"],
+        )
+        
         return action, new_state

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Dict, Any, Iterable
-from src.agent.base import BUTTONS_ORDER
+from src.action.pipeline import BUTTONS_ORDER
 
 
 # intent vocabulary 

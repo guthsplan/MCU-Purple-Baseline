@@ -38,7 +38,7 @@ def build_agent(
     """
 
     name = (agent_name or "noop").lower()
-
+    print(f"[BUILD_AGENT] name={name}, device={device}")
     
     # NoOp agent (debug / conformance / sanity checks)
     if name == "noop":

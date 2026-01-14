@@ -79,6 +79,8 @@ class Steve1Agent(BaseAgent):
             input_shape="*",
         )
 
+        logger.info("STEVE-1 raw action keys=%s type=%s", getattr(action, "keys", lambda: None)(), type(action))
+        
         new_state = Steve1State(
             condition=state.condition,
             state_in=new_state_in,

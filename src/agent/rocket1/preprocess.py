@@ -173,6 +173,7 @@ def decode_rocket_action(rocket_action: Dict[str, torch.Tensor]) -> Dict[str, An
 
     except Exception:
         # Absolute last safety net
+        logger.error("[Rocket1 decode fallback] %s", e)
         return noop
 
 
