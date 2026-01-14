@@ -21,7 +21,7 @@ dependencies = [
   "minestudio @ git+https://github.com/CraftJarvis/MineStudio.git"
 ]
 
-dev = [
+test = [
   "pytest>=7.0",
   "pytest-asyncio>=0.21",
   "httpx>=0.25",
