@@ -20,7 +20,7 @@ NUM_BUTTONS = len(BUTTONS_ORDER)
 
 
 def noop_action() -> Dict[str, Any]:
-    return {"buttons": [0] * NUM_BUTTONS, "camera": [0.0, 0.0]}
+    return {"buttons": [0], "camera": [60]}
 
 
 def to_mcu_action(
