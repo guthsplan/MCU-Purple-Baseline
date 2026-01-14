@@ -32,14 +32,16 @@ class VPTAgent(BaseAgent):
         hf_id_rl: str = "CraftJarvis/MineStudio_VPT.rl_from_early_game_2x",
         hf_id_fallback: str = "CraftJarvis/MineStudio_VPT.foundation_2x",
     ) -> None:
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         super().__init__(device=device)
+
+        
+        if self.device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.hf_id_rl = hf_id_rl
         self.hf_id_fallback = hf_id_fallback
-
-        # Resolve device
-        if self.device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         # Load model with fallback
         self.model = self._load_model().to(self.device)

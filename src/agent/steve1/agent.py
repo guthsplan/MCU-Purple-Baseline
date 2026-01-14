@@ -28,13 +28,18 @@ class Steve1Agent(BaseAgent):
         hf_id: str = "CraftJarvis/MineStudio_STEVE-1.official",
         cond_scale: float = 4.0,
     ) -> None:
+        
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
         super().__init__(device=device)
+
+        if self.device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.hf_id = hf_id
         self.cond_scale = cond_scale
 
-        if self.device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         logger.info("Loading STEVE-1 model: %s", hf_id)
         self.model = SteveOnePolicy.from_pretrained(hf_id).to(self.device)
@@ -62,7 +67,7 @@ class Steve1Agent(BaseAgent):
         self,
         obs: Dict[str, Any],
         state: Steve1State,
-        deterministic: bool = True,
+        deterministic: bool = True, # unused
     ) -> Tuple[Dict[str, Any], Steve1State]:
 
         steve_obs = build_steve1_obs(obs)

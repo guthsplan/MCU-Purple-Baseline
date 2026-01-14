@@ -16,7 +16,7 @@ from starlette.responses import PlainTextResponse
 def main():
     parser = argparse.ArgumentParser(description="Run the purple agent for MCU benchmark.")
     parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=9008)
+    parser.add_argument("--port", type=int, default=9019)
     parser.add_argument("--card-url", type=str, default=None, help="Public URL to advertise in agent card")
     parser.add_argument("--agent", type=str, default="vpt",choices=["noop","vpt","steve1","rocket1"], help="Policy agent name (default: vpt)")
     parser.add_argument("--debug", action="store_true")

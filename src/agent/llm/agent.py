@@ -48,11 +48,18 @@ class LLMAgent(BaseAgent):
 
         raw = self.client.chat(messages)
 
-        parsed = json.loads(raw)  # 실패하면 raise → BaseAgent noop
-        intent = parsed["intent"]
-        camera = parsed.get("camera", {})
-
-        action = intent_to_action(intent, camera)
+        try:
+            raw = self.client.chat(messages)
+            parsed = json.loads(raw)
+            intent = parsed["intent"]
+            camera = parsed.get("camera", {})
+            action = intent_to_action(intent, camera)
+        except Exception:
+            # Fallback: no-op action
+            action = {
+                "buttons": [0] * 20,
+                "camera": [0.0, 0.0],
+            }
 
         new_state = LLMState(
             memory=state.memory + [parsed],

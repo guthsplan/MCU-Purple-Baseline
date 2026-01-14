@@ -56,6 +56,8 @@ class Rocket1Agent(BaseAgent):
         rocket_in = build_rocket_input(obs, device=self.device)
         rocket_in.first[:] = torch.tensor([[bool(state.first)]], device=self.device)
 
+        rocket_in.input_dict["first"] = rocket_in.first
+        
         latents, new_memory = self.model(
             input=rocket_in.input_dict,
             memory=state.memory,
