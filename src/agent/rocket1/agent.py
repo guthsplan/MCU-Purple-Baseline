@@ -1,93 +1,143 @@
+# src/agent/rocket1/agent.py
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
-import torch
+from typing import Any, Dict, Optional, Tuple
 import logging
 
-from src.agent.base import BaseAgent, AgentState
-from src.agent.rocket1.preprocess import build_rocket_input, decode_rocket_action
-from src.agent.rocket1.model import ActionPayload  # pydantic validator
-from minestudio.models.rocket_one.body import RocketPolicy as MineStudioRocketPolicy
+import torch
+
+from minestudio.models.rocket_one.body import RocketPolicy
+
+from src.agent.base import BaseAgent
+from .preprocess import build_rocket_input
+from .model import RocketState
 
 logger = logging.getLogger("purple.rocket1")
 
-# Rocket-1 wrapper for Purple agent.
-class Rocket1Agent(BaseAgent):
 
-    def __init__(
-        self,
-        device: str | None = None,
-        hf_id: str = "CraftJarvis/MineStudio_ROCKET-1.12w_EMA",
-        deterministic_default: bool = True,
-        debug: bool = False,
-    ):
+class Rocket1Agent(BaseAgent):
+    def __init__(self, device: Optional[str] = None):
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
         super().__init__(device=device)
 
-        # Load parameters
-        self.hf_id = hf_id
-        self.deterministic_default = deterministic_default
-        self.debug = debug
-
-        # Load RocketPolicy model
-        self.model = MineStudioRocketPolicy.from_pretrained(self.hf_id).to(self.device)
+        # Load Rocket-1.12w_EMA model
+        logger.info("Loading Rocket-1 model: CraftJarvis/MineStudio_ROCKET-1.12w_EMA")
+        self.model = RocketPolicy.from_pretrained(
+            "CraftJarvis/MineStudio_ROCKET-1.12w_EMA"
+        ).to(self.device)
+        # Set model to eval mode
         self.model.eval()
+        logger.info("Rocket1Agent loaded on device=%s", self.device)
 
-        # Logging
-        logger.info(
-            "Rocket1Agent loaded: hf_id=%s device=%s deterministic_default=%s",
-            hf_id,
-            self.device,
-            deterministic_default,
-        )
+    def initial_state(self, task_text: Optional[str] = None) -> RocketState:
+        """
+        Initialize state for a new task.
+        
+        task_text: Optional task description (ignored for Rocket-1, included for BaseAgent compatibility)
+        """
+        return RocketState(memory=None, first=True)
 
-    def reset(self) -> None:
-        # State is handled externally (per context_id). Nothing global to reset.
-        return
-
-    # Forward pass through the model
     @torch.inference_mode()
     def _act_impl(
         self,
         obs: Dict[str, Any],
-        state: AgentState,
+        state: RocketState,
         deterministic: bool = True,
-    ) -> Tuple[Dict[str, Any], AgentState]:
-        logger.debug("[Rocket1] step start, first=%s", state.first)
-        if deterministic is None:
-            deterministic = self.deterministic_default
-
-        # Build Rocket input
-        rocket_in = build_rocket_input(obs, device=self.device)
-        rocket_in.first[:] = torch.tensor([[bool(state.first)]], device=self.device)
-        rocket_in.input_dict["first"] = rocket_in.first
-
-        # Model forward
-        latents, new_memory = self.model(
-            input=rocket_in.input_dict,
-            memory=state.memory,
-        )
-
-        # Sample action
-        if hasattr(self.model, "sample_action"):
-            action_t = self.model.sample_action(
-                latents["pi_logits"], deterministic=deterministic
+    ) -> Tuple[Dict[str, Any], RocketState]:
+        """
+        Core action generation logic.
+        """
+        try:
+            logger.info(f"[ROCKET1_ACT] Starting _act_impl")
+            logger.info(f"[ROCKET1_ACT] obs type: {type(obs)}")
+            logger.info(f"[ROCKET1_ACT] obs keys: {list(obs.keys())}")
+            if "image" in obs:
+                logger.info(f"[ROCKET1_ACT] obs['image'] type: {type(obs['image'])}, isinstance(list)={isinstance(obs['image'], list)}")
+            logger.info(f"[ROCKET1_ACT] state type: {type(state)}, state.first={state.first}, memory is None={state.memory is None}")
+            
+            from .input_validator import validate_rocket_input, validate_model_output
+            
+            # Preprocess observation to model input format
+            logger.info(f"[ROCKET1_ACT] Calling build_rocket_input...")
+            rocket_input = build_rocket_input(obs, self.device)
+            logger.info(f"[ROCKET1_ACT] build_rocket_input returned successfully")
+            logger.info(f"[ROCKET1_ACT] rocket_input keys: {list(rocket_input.keys())}")
+            logger.info(f"[ROCKET1_ACT] rocket_input['image'] type: {type(rocket_input['image'])}, shape: {rocket_input['image'].shape if hasattr(rocket_input['image'], 'shape') else 'N/A'}")
+            logger.info(f"[ROCKET1_ACT] rocket_input['segment'] type: {type(rocket_input['segment'])}")
+            if isinstance(rocket_input['segment'], dict):
+                logger.info(f"[ROCKET1_ACT] rocket_input['segment'] keys: {list(rocket_input['segment'].keys())}")
+                for key in rocket_input['segment']:
+                    val = rocket_input['segment'][key]
+                    logger.info(f"[ROCKET1_ACT]   segment['{key}'] type: {type(val)}, isinstance Tensor: {isinstance(val, torch.Tensor)}")
+                    if isinstance(val, torch.Tensor):
+                        logger.info(f"[ROCKET1_ACT]   segment['{key}'] shape: {val.shape}, dtype: {val.dtype}")
+            
+            # Validate input before passing to model
+            logger.info(f"[ROCKET1_ACT] Validating rocket_input...")
+            validate_rocket_input(rocket_input, stage="agent-act-pre-model")
+            logger.info(f"[ROCKET1_ACT] Input validation passed")
+            
+            # Forward pass through model
+            logger.info(f"[ROCKET1_ACT] Calling model forward...")
+            latents, new_memory = self.model(
+                input=rocket_input,
+                memory=state.memory,
             )
-        else:
-            action_t = self.model.pi_head.sample(
-                latents["pi_logits"], deterministic=deterministic
+            logger.info(f"[ROCKET1_ACT] Model forward returned successfully")
+            
+            # Validate output from model
+            logger.info(f"[ROCKET1_ACT] Validating model output...")
+            validate_model_output(latents, new_memory, stage="agent-act-post-model")
+            logger.info(f"[ROCKET1_ACT] Output validation passed")
+            
+            # Extract policy logits from output
+            pi_logits = latents["pi_logits"]
+            logger.info(f"[ROCKET1_ACT] pi_logits keys: {list(pi_logits.keys())}")
+            
+            # Decode logits to action - OUTPUT COMPACT FORMAT (len==1)
+            logger.info(f"[ROCKET1_ACT] Decoding actions...")
+            btn = pi_logits["buttons"].detach().cpu().view(-1)
+            buttons_expanded = (btn > 0).long().tolist()
+            buttons_expanded = (buttons_expanded + [0] * 20)[:20]
+            
+            cam = pi_logits["camera"].detach().cpu().view(-1)[:2]
+            cam = torch.clamp(cam, -1.0, 1.0)
+            camera_continuous = [float(cam[0]), float(cam[1])]
+            
+            # Convert to compact format (len==1) for simulator compatibility
+            # Buttons: Count the number of pressed buttons as action index (0-20)
+            button_action_idx = sum(buttons_expanded)
+            
+            # Camera: Discretize continuous camera values to integer bin
+            # Map [-1.0, 1.0] to [0, 120] range (standard for MineStudio)
+            camera_yaw = int((camera_continuous[0] + 1.0) / 2.0 * 120)
+            camera_yaw = max(0, min(120, camera_yaw))  # Clamp to valid range
+            
+            action = {
+                "buttons": [button_action_idx],  # Compact: single value
+                "camera": [camera_yaw],           # Compact: single discretized value
+            }
+            logger.info(f"[ROCKET1_ACT] Action decoded (COMPACT): buttons={action['buttons']}, camera={action['camera']}")
+
+            
+            # Update state with new recurrent memory
+            new_state = RocketState(
+                memory=new_memory,
+                first=False,
             )
-
-        action = decode_rocket_action(action_t)
-
-        new_state = AgentState(
-            memory=new_memory,
-            first=False,
-        )
-
-        logger.debug(
-            "[Rocket1] action buttons_sum=%d camera=%s",
-            sum(action["buttons"]),
-            action["camera"],
-        )
-        
-        return action, new_state
+            
+            logger.info(f"[ROCKET1_ACT] SUCCESS - returning action and new_state")
+            return action, new_state
+            
+        except Exception as e:
+            logger.error(f"[ROCKET1_ACT] EXCEPTION: {type(e).__name__}: {str(e)}", exc_info=True)
+            # Fallback to safe action on any error
+            action = {
+                "buttons": [0] * 20,
+                "camera": [0.0, 0.0],
+            }
+            new_state = RocketState(memory=state.memory, first=False)
+            logger.info(f"[ROCKET1_ACT] Returning fallback safe action due to exception")
+            return action, new_state
