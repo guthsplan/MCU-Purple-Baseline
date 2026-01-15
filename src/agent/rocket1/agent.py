@@ -1,50 +1,46 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
-import torch
+from typing import Any, Dict, Tuple, Optional
 import logging
+import torch
+
+from minestudio.models.rocket_one.body import RocketPolicy
 
 from src.agent.base import BaseAgent, AgentState
-from src.agent.rocket1.preprocess import build_rocket_input, decode_rocket_action
-from src.agent.rocket1.model import ActionPayload  # pydantic validator
-from minestudio.models.rocket_one.body import RocketPolicy as MineStudioRocketPolicy
+from .preprocess import build_rocket_input, decode_rocket_action
 
 logger = logging.getLogger("purple.rocket1")
 
-# Rocket-1 wrapper for Purple agent.
+
 class Rocket1Agent(BaseAgent):
+    """
+    Rocket-1 (MineStudio) wrapper for Purple baseline.
+
+    Design:
+      - B=1, T=1 only
+      - Zero segmentation mask (online MCU baseline)
+      - Per-context recurrent memory via AgentState
+    """
 
     def __init__(
         self,
-        device: str | None = None,
+        device: Optional[str] = None,
         hf_id: str = "CraftJarvis/MineStudio_ROCKET-1.12w_EMA",
         deterministic_default: bool = True,
-        debug: bool = False,
     ):
         super().__init__(device=device)
 
-        # Load parameters
         self.hf_id = hf_id
         self.deterministic_default = deterministic_default
-        self.debug = debug
 
-        # Load RocketPolicy model
-        self.model = MineStudioRocketPolicy.from_pretrained(self.hf_id).to(self.device)
+        logger.info("Loading Rocket-1 model: %s", hf_id)
+        self.model = RocketPolicy.from_pretrained(hf_id).to(self.device)
         self.model.eval()
 
-        # Logging
-        logger.info(
-            "Rocket1Agent loaded: hf_id=%s device=%s deterministic_default=%s",
-            hf_id,
-            self.device,
-            deterministic_default,
-        )
-
     def reset(self) -> None:
-        # State is handled externally (per context_id). Nothing global to reset.
+        # no global reset; per-context state only
         return
 
-    # Forward pass through the model
     @torch.inference_mode()
     def _act_impl(
         self,
@@ -52,42 +48,37 @@ class Rocket1Agent(BaseAgent):
         state: AgentState,
         deterministic: bool = True,
     ) -> Tuple[Dict[str, Any], AgentState]:
-        logger.debug("[Rocket1] step start, first=%s", state.first)
+
         if deterministic is None:
             deterministic = self.deterministic_default
 
-        # Build Rocket input
+        # 1) preprocess obs -> Rocket input
         rocket_in = build_rocket_input(obs, device=self.device)
-        rocket_in.first[:] = torch.tensor([[bool(state.first)]], device=self.device)
-        rocket_in.input_dict["first"] = rocket_in.first
 
-        # Model forward
+        # 2) forward
         latents, new_memory = self.model(
-            input=rocket_in.input_dict,
+            input=rocket_in,
             memory=state.memory,
         )
 
-        # Sample action
+        # 3) sample action
         if hasattr(self.model, "sample_action"):
-            action_t = self.model.sample_action(
-                latents["pi_logits"], deterministic=deterministic
+            action_tokens = self.model.sample_action(
+                latents["pi_logits"],
+                deterministic=deterministic,
             )
         else:
-            action_t = self.model.pi_head.sample(
-                latents["pi_logits"], deterministic=deterministic
+            action_tokens = self.model.pi_head.sample(
+                latents["pi_logits"],
+                deterministic=deterministic,
             )
 
-        action = decode_rocket_action(action_t)
+        # 4) decode to MCU-safe action
+        action = decode_rocket_action(action_tokens)
 
         new_state = AgentState(
             memory=new_memory,
             first=False,
         )
 
-        logger.debug(
-            "[Rocket1] action buttons_sum=%d camera=%s",
-            sum(action["buttons"]),
-            action["camera"],
-        )
-        
         return action, new_state
