@@ -123,21 +123,39 @@ Action contract:
 
 ## Project Structure
 ```
+
 MCU-Purple-Baseline/
+├── README.md
+├── Dockerfile.rocket1
+├── Dockerfile.steve1
+├── Dockerfile.vpt
+├── LICENSE
+├── pyproject.toml
+├── requirements.txt
 ├── src/
+│   ├── action/
+│   │   ├── __init__.py
+│   │   ├── action_space.py
+│   │   └── pipeline.py
 │   ├── agent/
 │   │   ├── __init__.py
 │   │   ├── base.py
+│   │   ├── download.py
 │   │   ├── noop.py
 │   │   ├── registry.py
+│   │   ├── llm/
+│   │   │   ├── __init__.py
+│   │   │   ├── action_map.py
+│   │   │   ├── agent.py
+│   │   │   ├── client.py
+│   │   │   ├── model.py
+│   │   │   ├── preprocess.py
+│   │   │   └── prompt.py
 │   │   ├── rocket1/
 │   │   │   ├── __init__.py
+│   │   │   ├── action_formatter.py
 │   │   │   ├── agent.py
-│   │   │   ├── model.py
-│   │   │   └── preprocess.py
-│   │   ├── vpt/
-│   │   │   ├── __init__.py
-│   │   │   ├── agent.py
+│   │   │   ├── input_validator.py
 │   │   │   ├── model.py
 │   │   │   └── preprocess.py
 │   │   ├── steve1/
@@ -145,14 +163,11 @@ MCU-Purple-Baseline/
 │   │   │   ├── agent.py
 │   │   │   ├── model.py
 │   │   │   └── preprocess.py
-│   │   └── llm/              
+│   │   └── vpt/
 │   │       ├── __init__.py
 │   │       ├── agent.py
 │   │       ├── model.py
-│   │       ├── preprocess.py
-│   │       ├── prompt.py
-│   │       ├── client.py
-│   │       └── action_map.py
+│   │       └── preprocess.py
 │   ├── protocol/
 │   │   ├── __init__.py
 │   │   └── models.py
@@ -165,10 +180,10 @@ MCU-Purple-Baseline/
 │   ├── conftest.py
 │   ├── test_agent_card.py
 │   └── test_init_obs_action.py
-├── requirements.txt
-├── pyproject.toml
-├── README.md
-└── .gitignore
+└── .github/
+    └── workflows/
+        └── test-and-publish.yml
+
 ```
 ## Notes
 
