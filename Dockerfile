@@ -23,6 +23,6 @@ RUN \
     --mount=type=cache,target=/home/agent/.cache,uid=1000 \
     uv run python -m src.agent.download --agent vpt --device cpu
 
-EXPOSE 9019
+EXPOSE 9009
 ENTRYPOINT ["uv", "run", "python", "-m", "src.server.app"]
-CMD ["--host", "0.0.0.0", "--port", "9019", "--model", "vpt"]
+CMD ["--host", "0.0.0.0", "--port", "9009", "--model", "vpt"]
