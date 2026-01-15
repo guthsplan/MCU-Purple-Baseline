@@ -3,6 +3,20 @@ FROM ghcr.io/astral-sh/uv:python3.11-trixie
 # system deps
 RUN apt-get update && apt-get install -y \
     git curl ca-certificates \
+    build-essential \
+    cmake \
+    gcc \
+    g++ \
+    xvfb \
+    mesa-utils \
+    libegl1 \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN adduser agent
