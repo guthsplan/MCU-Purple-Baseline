@@ -38,13 +38,10 @@ def download_vpt_models(
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    # VPT action space
     action_space = build_vpt_action_space()
     
     logger.info("Pre-downloading VPT RL model: %s", hf_id_rl)
-
     try:
-        # Load RL model to trigger download
         model_rl = VPTPolicy.from_pretrained(
             hf_id_rl,
             action_space=action_space,

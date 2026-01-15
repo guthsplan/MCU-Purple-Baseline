@@ -262,7 +262,7 @@ class Executor(AgentExecutor):
                     return await self._finalize(
                         event_queue=event_queue, task_id=task_id, context_id=context_id, message=noop_msg
                     )
-                # Act
+
                 action, new_state = agent.act(
                     obs=obs_dict,
                     state=state,

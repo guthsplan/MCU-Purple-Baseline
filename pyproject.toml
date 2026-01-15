@@ -2,31 +2,27 @@
 name = "mcu-purple-baseline"
 version = "0.1.0"
 description = "A2A-compatible purple baseline agent for MCU AgentBeats benchmark"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 
 dependencies = [
   # A2A server stack (recommendation: http-server extra)
-  "a2a-sdk[http-server]>=0.3.0",
-  "uvicorn>=0.23",
-
-  # runtime utilities used by server/executor
-  "pydantic>=2.0",
-  "numpy>=1.24",
-  "opencv-python-headless>=4.8",
+  "a2a-sdk>=0.3.5",
+  "google-adk>=1.14.1",
+  "google-genai>=1.36.0",
+  "litellm>=1.0.0",
+  "nest-asyncio>=1.6.0",
+  "psutil>=7.2.1",
+  "pydantic>=2.11.9",
+  "python-dotenv>=1.1.1",
+  "uvicorn>=0.35.0",
+  "psutil>=7.2.1",
+  "pyglet==1.4.0b1",
+  # MineStudio from github
+  "minestudio @ git+https://github.com/CraftJarvis/MineStudio.git"
 ]
 
 [project.optional-dependencies]
-rocket1 = [
-  "torch",
-  "torchvision",
-  "einops",
-  "timm",
-  "huggingface_hub",
-  # MineStudio if pip install
-  # "minestudio",
-]
-
-dev = [
+test = [
   "pytest>=7.0",
   "pytest-asyncio>=0.21",
   "httpx>=0.25",
