@@ -38,4 +38,4 @@ RUN \
 
 EXPOSE 9009
 ENTRYPOINT ["uv", "run", "python", "-m", "src.server.app"]
-CMD ["--host", "0.0.0.0", "--port", "9009", "--model", "rocket1"]
+CMD ["--host", "0.0.0.0", "--port", "9009", "--agent", "rocket1"]
