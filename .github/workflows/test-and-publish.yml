@@ -35,34 +35,65 @@ jobs:
           echo "After cleanup:"
           df -h
 
-      - name: Extract metadata for Docker
-        id: meta
+      - name: Extract metadata for Docker (vpt)
+        id: meta-vpt
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=pr,suffix=-vpt
+            type=semver,pattern={{version}},suffix=-vpt
+            type=semver,pattern={{major}},suffix=-vpt
+            type=raw,value=vpt,enable={{is_default_branch}}
 
-      - name: Build Docker image
+      - name: Extract metadata for Docker (steve1)
+        id: meta-steve1
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=pr,suffix=-steve1
+            type=semver,pattern={{version}},suffix=-steve1
+            type=semver,pattern={{major}},suffix=-steve1
+            type=raw,value=steve1,enable={{is_default_branch}}
+
+      - name: Build Docker image (vpt)
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ./Dockerfile.vpt
           push: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta-vpt.outputs.tags }}
+          labels: ${{ steps.meta-vpt.outputs.labels }}
           load: true
           platforms: linux/amd64
 
-      - name: Start agent container
+      - name: Build Docker image (steve1)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.steve1
+          push: false
+          tags: ${{ steps.meta-steve1.outputs.tags }}
+          labels: ${{ steps.meta-steve1.outputs.labels }}
+          load: true
+          platforms: linux/amd64
+
+      - name: Start agent container (vpt)
         env:
             SECRETS_JSON: ${{ toJson(secrets) }}
         run: |
           echo "$SECRETS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
-          docker run -d -p 9009:9009 --name agent-container --env-file .env $(echo "${{ steps.meta.outputs.tags }}" | head -n1) --host 0.0.0.0 --port 9009
+          docker run -d -p 9009:9009 --name agent-container-vpt --env-file .env $(echo "${{ steps.meta-vpt.outputs.tags }}" | head -n1) --host 0.0.0.0 --port 9009
           timeout 30 bash -c 'until curl -sf http://localhost:9009/.well-known/agent-card.json > /dev/null; do sleep 1; done'
+
+      - name: Start agent container (steve1)
+        env:
+            SECRETS_JSON: ${{ toJson(secrets) }}
+        run: |
+          echo "$SECRETS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
+          docker run -d -p 9010:9009 --name agent-container-steve1 --env-file .env $(echo "${{ steps.meta-steve1.outputs.tags }}" | head -n1) --host 0.0.0.0 --port 9009
+          timeout 30 bash -c 'until curl -sf http://localhost:9010/.well-known/agent-card.json > /dev/null; do sleep 1; done'
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v4
@@ -70,15 +101,21 @@ jobs:
       - name: Install test dependencies
         run: uv sync --extra test
 
-      - name: Run tests
+      - name: Run tests (vpt)
         run: uv run pytest -v --agent-url http://localhost:9009
 
-      - name: Stop container and show logs
+      - name: Run tests (steve1)
+        run: uv run pytest -v --agent-url http://localhost:9010
+
+      - name: Stop containers and show logs
         if: always()
         run: |
-          echo "=== Agent Container Logs ==="
-          docker logs agent-container || true
-          docker stop agent-container || true
+          echo "=== Agent Container Logs (vpt) ==="
+          docker logs agent-container-vpt || true
+          docker stop agent-container-vpt || true
+          echo "=== Agent Container Logs (steve1) ==="
+          docker logs agent-container-steve1 || true
+          docker stop agent-container-steve1 || true
 
       - name: Log in to GitHub Container Registry
         if: success() && github.event_name != 'pull_request'
@@ -88,13 +125,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push Docker image
+      - name: Push Docker images
         if: success() && github.event_name != 'pull_request'
-        run: docker push --all-tags ghcr.io/${GITHUB_REPOSITORY,,}
+        run: |
+          docker push --all-tags ghcr.io/${GITHUB_REPOSITORY,,}
 
       - name: Output image digest
         if: success() && github.event_name != 'pull_request'
         run: |
-          echo "## Docker Image Published :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "## Docker Images Published :rocket:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Tags:** ${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "**VPT Tags:** ${{ steps.meta-vpt.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Steve1 Tags:** ${{ steps.meta-steve1.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
