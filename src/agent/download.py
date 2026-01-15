@@ -107,7 +107,6 @@ def download_models_for_agent(agent_name: str, device: Optional[str] = None) -> 
     else:
         logger.warning("Unknown agent type: %s - skipping model download", name)
 
-
 if __name__ == "__main__":
     """CLI entry point for Docker build-time model downloads."""
     import argparse

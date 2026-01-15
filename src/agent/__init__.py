@@ -1,6 +1,6 @@
 from .base import BaseAgent, AgentState
-from .noop import NoOpAgent
 
+from .noop import NoOpAgent
 from .vpt import VPTAgent
 from .rocket1 import Rocket1Agent
 from .steve1 import Steve1Agent

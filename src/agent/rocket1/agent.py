@@ -56,15 +56,18 @@ class Rocket1Agent(BaseAgent):
         if deterministic is None:
             deterministic = self.deterministic_default
 
+        # Build Rocket input
         rocket_in = build_rocket_input(obs, device=self.device)
         rocket_in.first[:] = torch.tensor([[bool(state.first)]], device=self.device)
         rocket_in.input_dict["first"] = rocket_in.first
 
+        # Model forward
         latents, new_memory = self.model(
             input=rocket_in.input_dict,
             memory=state.memory,
         )
 
+        # Sample action
         if hasattr(self.model, "sample_action"):
             action_t = self.model.sample_action(
                 latents["pi_logits"], deterministic=deterministic

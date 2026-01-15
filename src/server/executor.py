@@ -20,11 +20,12 @@ from src.server.session_manager import SessionManager
 from src.protocol.models import InitPayload, ObservationPayload, AckPayload, ActionPayload
 from src.agent.registry import build_agent
 from src.agent.base import AgentState
-from src.action.pipeline import to_mcu_action, noop_action
 
 logger = logging.getLogger("purple.executor")
 logger.setLevel(logging.DEBUG)
 
+def noop_action() -> Dict[str, Any]:
+    return {"buttons": [0], "camera": [60]}
 
 def _noop_action_payload() -> Dict[str, Any]:
     return ActionPayload(   
@@ -74,13 +75,32 @@ class Executor(AgentExecutor):
     def _extract_text(self, msg: Optional[Message]) -> Optional[str]:
         if msg is None:
             return None
+
         parts = getattr(msg, "parts", None)
         if not isinstance(parts, list):
             return None
+
         for part in parts:
+            # Case 1) Part(root=TextPart(...))
             root = getattr(part, "root", None)
             if isinstance(root, TextPart) and isinstance(root.text, str):
                 return root.text
+
+            # Case 2) part itself is TextPart
+            if isinstance(part, TextPart) and isinstance(part.text, str):
+                return part.text
+
+            # Case 3) dict-like
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str):
+                    return text
+
+            # Case 4) generic attribute 'text'
+            text = getattr(part, "text", None)
+            if isinstance(text, str):
+                return text
+
         return None
 
     def _decode_obs(self, obs_base64: str) -> np.ndarray:
@@ -219,13 +239,17 @@ class Executor(AgentExecutor):
 
             # ---------------- obs ----------------
             if payload_type == "obs":
+                # Observation 
                 obs = ObservationPayload.model_validate(payload)
 
+                # Decode observation
                 image_rgb = self._decode_obs(obs.obs)
                 obs_dict = {"image": image_rgb, "step": obs.step}
 
+                # Session 
                 self.sessions.on_observation(context_id, obs.step)
 
+                # Agent + State
                 agent = self._get_or_create_agent(context_id)
                 state = self.agent_states.get(context_id)
 
@@ -244,23 +268,28 @@ class Executor(AgentExecutor):
                     state=state,
                     deterministic=True,
                 )
-
+                # Update state
                 self.agent_states[context_id] = new_state
                 self._touch(context_id)
 
-                prev_action = self._last_actions.get(context_id, noop_action())
+                # Store last action
                 self._last_actions[context_id] = action 
 
+                # Build action message
                 action_payload = ActionPayload(
                     action_type="agent",
                     buttons=action["buttons"],
                     camera=action["camera"],
                 )
+                
+                # Emit action message
                 action_msg = self._make_agent_message(
                     task_id=task_id,
                     context_id=context_id,
                     payload_obj=action_payload
                 )
+
+                # Finalize
                 return await self._finalize(
                     event_queue=event_queue, task_id=task_id, context_id=context_id, message=action_msg
                 )
