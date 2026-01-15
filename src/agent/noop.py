@@ -22,6 +22,4 @@ class NoOpAgent(BaseAgent):
         state: AgentState,
         deterministic: bool = True,
     ) -> Tuple[Any, AgentState]:
-        # ❗ action을 만들지 않는다
-        # ❗ pipeline이 noop을 만든다
         return None, state

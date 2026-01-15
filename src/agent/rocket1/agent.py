@@ -1,82 +1,71 @@
-from __future__ import annotations
-
-from typing import Any, Dict, Tuple, Optional
-import logging
+# src/agent/rocket1/agent.py
+from typing import Dict, Any, Tuple
 import torch
 
 from minestudio.models.rocket_one.body import RocketPolicy
 
-from src.agent.base import BaseAgent, AgentState
-from .preprocess import build_rocket_input, decode_rocket_action
-
-logger = logging.getLogger("purple.rocket1")
+from .preprocess import build_rocket_input
+from .model import RocketState
 
 
-class Rocket1Agent(BaseAgent):
-    """
-    Rocket-1 (MineStudio) wrapper for Purple baseline.
+class Rocket1Agent:
+    def __init__(self, device: str = None):
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    Design:
-      - B=1, T=1 only
-      - Zero segmentation mask (online MCU baseline)
-      - Per-context recurrent memory via AgentState
-    """
-
-    def __init__(
-        self,
-        device: Optional[str] = None,
-        hf_id: str = "CraftJarvis/MineStudio_ROCKET-1.12w_EMA",
-        deterministic_default: bool = True,
-    ):
-        super().__init__(device=device)
-
-        self.hf_id = hf_id
-        self.deterministic_default = deterministic_default
-
-        logger.info("Loading Rocket-1 model: %s", hf_id)
-        self.model = RocketPolicy.from_pretrained(hf_id).to(self.device)
+        self.device = device
+        self.model = RocketPolicy.from_pretrained(
+            "CraftJarvis/MineStudio_ROCKET-1.12w_EMA"
+        ).to(self.device)
         self.model.eval()
 
-    def reset(self) -> None:
-        # no global reset; per-context state only
-        return
+    def initial_state(self) -> RocketState:
+        return RocketState(memory=None, first=True)
 
     @torch.inference_mode()
-    def _act_impl(
+    def act(
         self,
         obs: Dict[str, Any],
-        state: AgentState,
-        deterministic: bool = True,
-    ) -> Tuple[Dict[str, Any], AgentState]:
+        state: RocketState,
+        deterministic: bool = True,  # executor에서 넘김
+    ) -> Tuple[Dict[str, Any], RocketState]:
+        """
+        Must return:
+          action = {
+              "buttons": List[int] (len=20),
+              "camera":  List[float] (len=2),
+          }
+        """
 
-        if deterministic is None:
-            deterministic = self.deterministic_default
+        # obs to Rocket input
+        rocket_input = build_rocket_input(obs, self.device)
 
-        # 1) preprocess obs -> Rocket input
-        rocket_in = build_rocket_input(obs, device=self.device)
-
-        # 2) forward
+        # forward
         latents, new_memory = self.model(
-            input=rocket_in,
+            input=rocket_input,
             memory=state.memory,
         )
 
-        # 3) sample action
-        if hasattr(self.model, "sample_action"):
-            action_tokens = self.model.sample_action(
-                latents["pi_logits"],
-                deterministic=deterministic,
-            )
-        else:
-            action_tokens = self.model.pi_head.sample(
-                latents["pi_logits"],
-                deterministic=deterministic,
-            )
+        pi_logits = latents["pi_logits"]
 
-        # 4) decode to MCU-safe action
-        action = decode_rocket_action(action_tokens)
+        # logits to action
+        # buttons
+        btn = pi_logits["buttons"].detach().cpu().view(-1)
+        buttons = (btn > 0).long().tolist()
+        buttons = (buttons + [0] * 20)[:20]
 
-        new_state = AgentState(
+        # camera
+        cam = pi_logits["camera"].detach().cpu().view(-1)[:2]
+        cam = torch.clamp(cam, -1.0, 1.0)
+        camera = [float(cam[0]), float(cam[1])]
+
+        action = {
+            "buttons": buttons,
+            "camera": camera,
+        }
+
+        # 4) update state
+        new_state = RocketState(
             memory=new_memory,
             first=False,
         )

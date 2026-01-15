@@ -49,7 +49,7 @@ def download_vpt_models(
             hf_id_rl,
             action_space=action_space,
         )
-        logger.info("✓ VPT RL model downloaded successfully")
+        logger.info("VPT RL model downloaded successfully")
         del model_rl  # Free memory
     except Exception as e:
         logger.warning("Failed to download VPT RL model (%s): %s", hf_id_rl, e)
@@ -59,7 +59,7 @@ def download_vpt_models(
                 hf_id_fallback,
                 action_space=action_space,
             )
-            logger.info("✓ VPT fallback model downloaded successfully")
+            logger.info("VPT fallback model downloaded successfully")
             del model_fallback  # Free memory
         except Exception as e2:
             logger.error("Failed to download VPT fallback model (%s): %s", hf_id_fallback, e2)
@@ -138,7 +138,7 @@ if __name__ == "__main__":
     logger.info("Starting model download for agent: %s", args.agent)
     try:
         download_models_for_agent(args.agent, device=args.device)
-        logger.info("✓ Model download completed successfully")
+        logger.info("Model download completed successfully")
     except Exception as e:
-        logger.error("✗ Model download failed: %s", e)
+        logger.error("Model download failed: %s", e)
         raise
