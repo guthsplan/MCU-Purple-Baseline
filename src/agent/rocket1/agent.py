@@ -96,21 +96,31 @@ class Rocket1Agent(BaseAgent):
             pi_logits = latents["pi_logits"]
             logger.info(f"[ROCKET1_ACT] pi_logits keys: {list(pi_logits.keys())}")
             
-            # Decode logits to action
+            # Decode logits to action - OUTPUT COMPACT FORMAT (len==1)
             logger.info(f"[ROCKET1_ACT] Decoding actions...")
             btn = pi_logits["buttons"].detach().cpu().view(-1)
-            buttons = (btn > 0).long().tolist()
-            buttons = (buttons + [0] * 20)[:20]
+            buttons_expanded = (btn > 0).long().tolist()
+            buttons_expanded = (buttons_expanded + [0] * 20)[:20]
             
             cam = pi_logits["camera"].detach().cpu().view(-1)[:2]
             cam = torch.clamp(cam, -1.0, 1.0)
-            camera = [float(cam[0]), float(cam[1])]
+            camera_continuous = [float(cam[0]), float(cam[1])]
+            
+            # Convert to compact format (len==1) for simulator compatibility
+            # Buttons: Count the number of pressed buttons as action index (0-20)
+            button_action_idx = sum(buttons_expanded)
+            
+            # Camera: Discretize continuous camera values to integer bin
+            # Map [-1.0, 1.0] to [0, 120] range (standard for MineStudio)
+            camera_yaw = int((camera_continuous[0] + 1.0) / 2.0 * 120)
+            camera_yaw = max(0, min(120, camera_yaw))  # Clamp to valid range
             
             action = {
-                "buttons": buttons,
-                "camera": camera,
+                "buttons": [button_action_idx],  # Compact: single value
+                "camera": [camera_yaw],           # Compact: single discretized value
             }
-            logger.info(f"[ROCKET1_ACT] Action decoded: buttons len={len(buttons)}, camera={camera}")
+            logger.info(f"[ROCKET1_ACT] Action decoded (COMPACT): buttons={action['buttons']}, camera={action['camera']}")
+
             
             # Update state with new recurrent memory
             new_state = RocketState(
