@@ -21,8 +21,8 @@ RUN \
 # pre-download VPT models from Hugging Face during build
 RUN \
     --mount=type=cache,target=/home/agent/.cache,uid=1000 \
-    uv run python -m src.agent.download --agent vpt --device cpu
+    uv run python -m src.agent.download --agent steve1 --device cpu
 
 EXPOSE 9009
 ENTRYPOINT ["uv", "run", "python", "-m", "src.server.app"]
-CMD ["--host", "0.0.0.0", "--port", "9009", "--model", "vpt"]
+CMD ["--host", "0.0.0.0", "--port", "9009", "--model", "steve1"]
