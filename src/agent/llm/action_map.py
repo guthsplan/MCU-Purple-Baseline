@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import Dict, Any, Iterable
-from src.action.pipeline import BUTTONS_ORDER
 
 
 # intent vocabulary 
@@ -26,6 +25,38 @@ ACTION_INTENTS = {
     "sprint": ["sprint"],
 }
 
+BUTTONS_ORDER: List[str] = [
+    # movement
+    "forward",
+    "back",
+    "left",
+    "right",
+
+    # camera-independent movement
+    "jump",
+    "sneak",
+    "sprint",
+
+    # interaction
+    "attack",
+    "use",
+    "drop",
+
+    # inventory / hotbar
+    "inventory",
+    "swapHands",
+
+    # hotbar slots
+    "hotbar.1",
+    "hotbar.2",
+    "hotbar.3",
+    "hotbar.4",
+    "hotbar.5",
+    "hotbar.6",
+    "hotbar.7",
+    "hotbar.8",
+    "hotbar.9",
+]
 
 def _init_buttons() -> Dict[str, int]:
     return {k: 0 for k in BUTTONS_ORDER}

@@ -59,8 +59,16 @@ class Steve1Agent(BaseAgent):
                 "text": task_text,
             }
         )
-        state_in = self.model.initial_state(condition, batch_size=1)
-        return Steve1State(condition=condition, state_in=state_in, first=True)
+        state_in = self.model.initial_state(
+            batch_size=1,
+            condition=condition,
+        )
+        
+        return Steve1State(
+            condition=condition,
+            state_in=state_in,
+            first=True,
+        )
 
     @torch.inference_mode()
     def _act_impl(
@@ -72,14 +80,20 @@ class Steve1Agent(BaseAgent):
 
         steve_obs = build_steve1_obs(obs)
 
-        action, new_state_in = self.model.get_steve_action(
-            state.condition,
-            steve_obs,
-            state.state_in,
+        input_dict = {
+            "image": steve_obs["image"],
+            "condition": state.condition,
+        }
+
+        action, new_state_in = self.model.get_action(
+            input=input_dict,
+            state_in=state.state_in,
             input_shape="*",
+            deterministic=deterministic,
         )
 
-        logger.info("STEVE-1 raw action keys=%s type=%s", getattr(action, "keys", lambda: None)(), type(action))
+        action["buttons"] = action["buttons"].cpu().numpy().tolist()
+        action["camera"] = action["camera"].cpu().numpy().tolist()
         
         new_state = Steve1State(
             condition=state.condition,

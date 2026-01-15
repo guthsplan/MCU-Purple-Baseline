@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from typing import Any, Dict, Optional
+from pydantic import BaseModel
 
 import cv2
 import numpy as np
@@ -16,22 +17,22 @@ from a2a.types import Message, Part, Role, TextPart
 from a2a.utils import new_agent_text_message  # fallback 용도로만 사용
 
 from src.server.session_manager import SessionManager
-from src.protocol.models import InitPayload, ObservationPayload
+from src.protocol.models import InitPayload, ObservationPayload, AckPayload, ActionPayload
 from src.agent.registry import build_agent
 from src.agent.base import AgentState
-from src.action.pipeline import to_mcu_action, noop_action
 
 logger = logging.getLogger("purple.executor")
 logger.setLevel(logging.DEBUG)
 
+def noop_action() -> Dict[str, Any]:
+    return {"buttons": [0], "camera": [60]}
 
 def _noop_action_payload() -> Dict[str, Any]:
-    return {
-        "type": "action",
-        "action_type": "agent",
-        "buttons": [0] * 20,
-        "camera": [0.0, 0.0],
-    }
+    return ActionPayload(   
+        action_type="agent",
+        buttons=noop_action()["buttons"],
+        camera=noop_action()["camera"],
+    )
 
 
 class Executor(AgentExecutor):
@@ -74,13 +75,32 @@ class Executor(AgentExecutor):
     def _extract_text(self, msg: Optional[Message]) -> Optional[str]:
         if msg is None:
             return None
+
         parts = getattr(msg, "parts", None)
         if not isinstance(parts, list):
             return None
+
         for part in parts:
+            # Case 1) Part(root=TextPart(...))
             root = getattr(part, "root", None)
             if isinstance(root, TextPart) and isinstance(root.text, str):
                 return root.text
+
+            # Case 2) part itself is TextPart
+            if isinstance(part, TextPart) and isinstance(part.text, str):
+                return part.text
+
+            # Case 3) dict-like
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str):
+                    return text
+
+            # Case 4) generic attribute 'text'
+            text = getattr(part, "text", None)
+            if isinstance(text, str):
+                return text
+
         return None
 
     def _decode_obs(self, obs_base64: str) -> np.ndarray:
@@ -89,11 +109,10 @@ class Executor(AgentExecutor):
 
         img_bytes = base64.b64decode(obs_base64)
         img_array = np.frombuffer(img_bytes, dtype=np.uint8)
-        img_bgr = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-        if img_bgr is None:
+        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        if img is None:
             raise ValueError("cv2.imdecode failed")
 
-        img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         if img.ndim != 3 or img.shape[2] != 3:
             raise ValueError(f"Invalid image shape: {img.shape}")
         return img
@@ -130,11 +149,15 @@ class Executor(AgentExecutor):
             self.agents[context_id] = agent
         return agent
 
-    def _make_agent_message(self, *, task_id: str, context_id: str, payload_obj: Dict[str, Any]) -> Message:
+    def _make_agent_message(self, *, task_id: str, context_id: str, payload_obj: Dict[str, Any] | BaseModel) -> Message:
         """
         Make agent Message with given payload object.
         """
-        text = json.dumps(payload_obj)
+        if isinstance(payload_obj, BaseModel):
+            text = payload_obj.model_dump_json()
+        else:
+            text = json.dumps(payload_obj)
+            
         return Message(
             role=Role.agent,
             task_id=task_id,
@@ -204,15 +227,11 @@ class Executor(AgentExecutor):
                 self._last_actions[context_id] = noop_action()
                 self._touch(context_id)
 
-                ack = {
-                    "type": "ack",
-                    "success": True,
-                    "message": "Initialization success",
-                }
+                ack_payload = AckPayload(success=True, message="Initialization successful.")
                 ack_msg = self._make_agent_message(
                     task_id=task_id,
                     context_id=context_id,
-                    payload_obj=ack,
+                    payload_obj=ack_payload
                 )
                 return await self._finalize(
                     event_queue=event_queue, task_id=task_id, context_id=context_id, message=ack_msg
@@ -220,13 +239,17 @@ class Executor(AgentExecutor):
 
             # ---------------- obs ----------------
             if payload_type == "obs":
+                # Observation 
                 obs = ObservationPayload.model_validate(payload)
 
+                # Decode observation
                 image_rgb = self._decode_obs(obs.obs)
                 obs_dict = {"image": image_rgb, "step": obs.step}
 
+                # Session 
                 self.sessions.on_observation(context_id, obs.step)
 
+                # Agent + State
                 agent = self._get_or_create_agent(context_id)
                 state = self.agent_states.get(context_id)
 
@@ -239,37 +262,34 @@ class Executor(AgentExecutor):
                     return await self._finalize(
                         event_queue=event_queue, task_id=task_id, context_id=context_id, message=noop_msg
                     )
-
-                policy_out, new_state = agent.act(
+                # Act
+                action, new_state = agent.act(
                     obs=obs_dict,
                     state=state,
                     deterministic=True,
                 )
-
+                # Update state
                 self.agent_states[context_id] = new_state
                 self._touch(context_id)
 
-                prev_action = self._last_actions.get(context_id, noop_action())
-                mcu_action = to_mcu_action(
-                    policy_out,
-                    state=new_state,
-                    prev_action=prev_action,
-                    deterministic=True,
-                    anti_idle=True,
-                )
-                self._last_actions[context_id] = mcu_action
+                # Store last action
+                self._last_actions[context_id] = action 
 
-                action_payload = {
-                    "type": "action",
-                    "action_type": "agent",
-                    "buttons": mcu_action["buttons"],
-                    "camera": mcu_action["camera"],
-                }
+                # Build action message
+                action_payload = ActionPayload(
+                    action_type="agent",
+                    buttons=action["buttons"],
+                    camera=action["camera"],
+                )
+                
+                # Emit action message
                 action_msg = self._make_agent_message(
                     task_id=task_id,
                     context_id=context_id,
-                    payload_obj=action_payload,
+                    payload_obj=action_payload
                 )
+
+                # Finalize
                 return await self._finalize(
                     event_queue=event_queue, task_id=task_id, context_id=context_id, message=action_msg
                 )

@@ -121,18 +121,16 @@ class VPTAgent(BaseAgent):
         vpt_obs = build_vpt_obs(obs)  # {"image": HWC uint8} 형태
 
         # VPTPolicy.get_action -> {"buttons": token, "camera": token} + new_memory
-        action_tokens, new_memory = self.model.get_action(
+        action, new_memory = self.model.get_action(
             vpt_obs,
             state.memory,
-            deterministic=deterministic,
             input_shape="*",
         )
 
-        # ✅ 핵심: 토큰을 MineRL-style dict로 디코드해서 pipeline에 넘김
-        action_env = self._decode_to_env_action(action_tokens)
-
         new_state = VPTState(memory=new_memory, first=False)
-        return action_env, new_state
+        action["buttons"] = action["buttons"].cpu().numpy().tolist()
+        action["camera"] = action["camera"].cpu().numpy().tolist()
+        return action, new_state
 
     def _decode_to_env_action(self, action_tokens: Dict[str, Any]) -> Dict[str, Any]:
         """
