@@ -1,87 +1,86 @@
 # MCU-Purple-Baseline
 
-Purple agent baseline for **MCU AgentBeats (MineStudio)** using the **A2A (Agent-to-Agent) protocol**.
+A minimal but fully functional **Purple agent baseline** for **MCU AgentBeats (MineStudio)** using the **A2A (Agent-to-Agent) protocol**.
 
-This repository provides a minimal but fully functional **Purple policy server** that:
-- Runs an A2A-compliant HTTP server (Agent Card + message endpoint)
-- Receives `init` / `obs` messages from Green
-- Responds with JSON `ack` / `action` payloads (evaluator-safe)
-- Supports multiple policies (Rocket-1 / VPT / STEVE-1 / NoOp, optional LLM)
-- Is compatible with the MCU evaluator and the included conformance tests
+This repository provides a reference implementation of an A2A-compliant policy server that responds to task instructions and observations from the Green evaluator agent.
+
+## 🎯 Overview
+
+The Purple Agent is responsible for:
+- **Task Initialization**: Receive task instructions (e.g., "craft oak planks") and prepare internal state
+- **Perception**: Decode observation images (128×128 RGB) from the environment
+- **Decision Making**: Execute policies (Rocket-1, VPT, STEVE-1, or custom) to generate actions
+- **Action Output**: Return standardized action formats (buttons + camera controls)
+
+All communication follows the **A2A protocol** with JSON message contracts, enabling seamless integration with:
+- 🟢 Green Agent (MCU evaluator)
+- 🎮 MineStudio environment
+- ✅ Conformance tests
+
+### Key Features
+
+✅ **A2A-compliant** - Agent Card + standard message endpoints  
+✅ **Multiple Policies** - Rocket-1, VPT, STEVE-1, NoOp, LLM (experimental)  
+✅ **Robust Observation Handling** - Base64 decoding, image validation, preprocessing  
+✅ **Session Management** - Per-context state tracking with TTL garbage collection  
+✅ **Evaluator-Safe** - Standardized action format (23 buttons + 2-D camera)  
 
 ---
 
-## Features
+## 🚀 Quick Start
 
-- A2A-compliant Agent Card (`/.well-known/agent-card.json`)
-- Robust message parsing (TextPart JSON → typed payload)
-- Robust observation decoding (base64 JPEG/PNG → RGB numpy)
-- Per-`context_id` session/state management (recurrent memory, TTL GC)
-- Action normalization to MineRL/VPT standard:
-  - `buttons`: length 23, int {0,1}
-  - `camera`: length 2, float
+### Prerequisites
 
----
-
-## Requirements
-
-- Python **>= 3.10** (Recommended: 3.11 for Purple; Green can be 3.10)
+- Python **>= 3.10** (Recommended: 3.11)
 - OS: **Linux / WSL** recommended
-- GPU optional (CPU works for baseline; some models may be slow on CPU)
-  
----
+- GPU optional (CPU works; some models may be slow)
 
-## Installation
+### 1. Installation
 
-### 1. Clone repository
+Clone the repository and install dependencies:
+
 ```bash
 git clone https://github.com/<YOUR_ID>/MCU-Purple-Baseline.git
 cd MCU-Purple-Baseline
-```
-### 2. Create virtual environment (recommended)
-```bash
+
+# Create virtual environment (recommended)
 python -m venv .venv
-source .venv/bin/activate
-```
-### 3. Install dependencies
-```bash
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
-### Run the Purple Agent
+
+### 2. Run Purple Agent Server
+
+**Default (Rocket-1 policy):**
 ```bash
 python -m src.server.app --agent rocket1
 ```
-**Default settings**
-- Host: 127.0.0.1
-- Port: 9019
-- Agent: rocket1
-  
-**You can override options:**
+
+**Custom configuration:**
 ```bash
-python -m src.server.app --host 127.0.0.1 --port 9019 --agent rocket1
-```
-**Available agents**
-- rocket1 (default pretrained Rocket-1 from Hugging Face via MineStudio)
-- vpt (MineStudio VPTPolicy)
-- steve1 (MineStudio SteveOnePolicy)
-- noop (sanity-check baseline)
-- llm (experimental; requires OPENAI_API_KEY and compatible prompt/client wiring)
-Example:
-```bash
-python -m src.server.app --agent vpt
-python -m src.server.app --agent steve1
-python -m src.server.app --agent noop
+python -m src.server.app --host 0.0.0.0 --port 9019 --agent steve1
 ```
 
-## Verify Agent Card
-Once running, the agent card should be available at:
+**Available policies:**
+- `rocket1` (default) - Pretrained Rocket-1 via Hugging Face
+- `vpt` - MineStudio VPT policy
+- `steve1` - MineStudio STEVE-1 policy  
+- `noop` - No-op baseline (returns [0, 0, ..., 0, 0])
+- `llm` - Experimental LLM-based policy (requires `OPENAI_API_KEY`)
+
+### 3. Verify Agent Card
+
+Check that the server is running and discoverable:
+
 ```bash
-http://localhost:9008/.well-known/agent-card.json
+curl http://localhost:9019/.well-known/agent-card.json
 ```
-**This endpoint is required for:**
-- A2A client discovery
-- MCU evaluator
-- Conformance tests
+
+Expected response: JSON agent card with metadata (required for Green agent discovery)
+
+---
 
 ## Message Protocol
 
@@ -193,7 +192,7 @@ Purple → Green:
 3. action(buttons, camera)
 4. ...
 
-## Project Structure
+## 📁Project Structure
 ```
 
 MCU-Purple-Baseline/
@@ -267,7 +266,7 @@ MCU-Purple-Baseline/
 
 - For public deployments behind NAT/containers, use --card-url to advertise a reachable URL in the Agent Card:
 
-### Out of Scope
+## Out of Scope
 
 The Purple Agent does NOT:
 - Launch the Minecraft simulator
