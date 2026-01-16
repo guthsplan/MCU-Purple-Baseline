@@ -25,12 +25,11 @@ def main():
     parser = argparse.ArgumentParser(description="Run MCU Purple Baseline")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9019)
+    parser.add_argument("--card-url", type=str, help="URL to advertise in the agent card")
     parser.add_argument("--agent", default="steve1")
     parser.add_argument("--device", default=None)
     parser.add_argument("--state-ttl", type=int, default=3600)
     args = parser.parse_args()
-
-    public_url = f"http://127.0.0.1:{args.port}/"
 
     # ------------------------------------------------------------------
     # Agent Card 
@@ -46,7 +45,7 @@ def main():
     agent_card = AgentCard(
         name="MCU Purple Baseline",
         description="Purple agent compatible with MCU Green evaluator",
-        url=public_url,
+        url=args.card_url or f"http://{args.host}:{args.port}/",
         version="0.1.0",
         default_input_modes=["text", "application/json"],
         default_output_modes=["text", "application/json"],

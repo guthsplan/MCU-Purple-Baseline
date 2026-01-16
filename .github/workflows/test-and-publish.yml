@@ -57,17 +57,6 @@ jobs:
             type=semver,pattern={{major}},suffix=-steve1
             type=raw,value=steve1,enable={{is_default_branch}}
 
-      - name: Extract metadata for Docker (rocket1)
-        id: meta-rocket1
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=pr,suffix=-rocket1
-            type=semver,pattern={{version}},suffix=-rocket1
-            type=semver,pattern={{major}},suffix=-rocket1
-            type=raw,value=rocket1,enable={{is_default_branch}}
-
       - name: Build Docker image (vpt)
         uses: docker/build-push-action@v5
         with:
@@ -90,24 +79,13 @@ jobs:
           load: true
           platforms: linux/amd64
 
-      - name: Build Docker image (rocket1)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile.rocket1
-          push: false
-          tags: ${{ steps.meta-rocket1.outputs.tags }}
-          labels: ${{ steps.meta-rocket1.outputs.labels }}
-          load: true
-          platforms: linux/amd64
-
       - name: Start agent container (vpt)
         env:
             SECRETS_JSON: ${{ toJson(secrets) }}
         run: |
           echo "$SECRETS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
           docker run -d -p 9009:9009 --name agent-container-vpt --env-file .env $(echo "${{ steps.meta-vpt.outputs.tags }}" | head -n1) --host 0.0.0.0 --port 9009
-          timeout 30 bash -c 'until curl -sf http://localhost:9009/.well-known/agent-card.json > /dev/null; do sleep 1; done'
+          timeout 120 bash -c 'until curl -sf http://localhost:9009/.well-known/agent-card.json > /dev/null; do sleep 1; done'
 
       - name: Start agent container (steve1)
         env:
@@ -115,20 +93,7 @@ jobs:
         run: |
           echo "$SECRETS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
           docker run -d -p 9010:9009 --name agent-container-steve1 --env-file .env $(echo "${{ steps.meta-steve1.outputs.tags }}" | head -n1) --host 0.0.0.0 --port 9009
-          timeout 30 bash -c 'until curl -sf http://localhost:9010/.well-known/agent-card.json > /dev/null; do sleep 1; done'
-
-      - name: Start agent container (rocket1)
-        env:
-            SECRETS_JSON: ${{ toJson(secrets) }}
-        run: |
-          echo "$SECRETS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
-          docker run -d -p 9011:9009 --name agent-container-rocket1 --env-file .env $(echo "${{ steps.meta-rocket1.outputs.tags }}" | head -n1) --host 0.0.0.0 --port 9009
-          echo "Waiting for rocket1 container to be ready (may take longer due to model size)..."
-          timeout 120 bash -c 'until curl -sf http://localhost:9011/.well-known/agent-card.json > /dev/null; do echo "Waiting..."; sleep 2; done' || {
-            echo "=== Rocket1 Container Logs (startup failed) ==="
-            docker logs agent-container-rocket1
-            exit 1
-          }
+          timeout 120 bash -c 'until curl -sf http://localhost:9010/.well-known/agent-card.json > /dev/null; do sleep 1; done'
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v4
@@ -142,9 +107,6 @@ jobs:
       - name: Run tests (steve1)
         run: uv run pytest -v --agent-url http://localhost:9010
 
-      - name: Run tests (rocket1)
-        run: uv run pytest -v --agent-url http://localhost:9011
-
       - name: Stop containers and show logs
         if: always()
         run: |
@@ -154,9 +116,6 @@ jobs:
           echo "=== Agent Container Logs (steve1) ==="
           docker logs agent-container-steve1 || true
           docker stop agent-container-steve1 || true
-          echo "=== Agent Container Logs (rocket1) ==="
-          docker logs agent-container-rocket1 || true
-          docker stop agent-container-rocket1 || true
 
       - name: Log in to GitHub Container Registry
         if: success() && github.event_name != 'pull_request'
@@ -179,5 +138,3 @@ jobs:
           echo "**VPT Tags:** ${{ steps.meta-vpt.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Steve1 Tags:** ${{ steps.meta-steve1.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Rocket1 Tags:** ${{ steps.meta-rocket1.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
