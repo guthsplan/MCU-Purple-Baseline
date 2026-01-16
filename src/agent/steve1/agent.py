@@ -70,39 +70,14 @@ class Steve1Agent(BaseAgent):
         condition = self.model.prepare_condition(
             {"cond_scale": float(self.cond_scale), "text": task_text}
         )
+        embeds = condition.get("mineclip_embeds")
+        if not isinstance(embeds, torch.Tensor):
+            raise RuntimeError("mineclip_embeds missing or not a tensor")
 
-        embed = condition.get("mineclip_embeds")
-        if not isinstance(embed, torch.Tensor):
-            raise RuntimeError("mineclip_embeds missing or not a torch.Tensor")
-
-        if embed.ndim == 4:
-            # (cfg, B, T, C)
-            embed = embed[0]
-            # 이제 (B, T, C) → (B, C)
-            embed = embed[:, 0, :]
-        elif embed.ndim == 3:
-            # (B, T, C) → (B, C)
-            embed = embed[:, 0, :]
-        elif embed.ndim == 2:
-            # already (B, C)
-            pass
-        else:
-            raise RuntimeError(f"Unexpected mineclip_embeds shape: {tuple(embed.shape)}")
-
-        if embed.ndim != 2:
-            raise RuntimeError(f"mineclip_embeds MUST be 2D (B,C), got {tuple(embed.shape)}")
-
-        condition["mineclip_embeds"] = embed
-
-        batch_size = embed.shape[0]
+        batch_size = embeds.shape[0]
 
         state_in = self.model.initial_state(
             batch_size=batch_size,
-            condition=condition,
-        )
-
-        state_in = self.model.initial_state(
-            batch_size=1,
             condition=condition,
         )
 
@@ -137,20 +112,21 @@ class Steve1Agent(BaseAgent):
         """
         # preprocess obs
         steve_obs = build_steve1_obs(obs)
-        image_bt = steve_obs["image"]  # HWC uint8 numpy
+        img = steve_obs["image"]  # HWC uint8 numpy
 
-        # dtype 
-        if image_bt.dtype == np.float64:
-            image_bt = image_bt.astype(np.float32, copy=False)
-        elif image_bt.dtype != np.uint8 and image_bt.dtype != np.float32:
-            image_bt = image_bt.astype(np.uint8, copy=False)
+        img = torch.tensor(img, dtype=torch.uint8, device=self.device)
+        if img.ndim == 3:
+            img = img[None, None, ...]
+        elif img.ndim == 4:
+            img = img[None, ...]
 
         # input dict expected by SteveOnePolicy.get_action
         input_dict = {
-            "image": image_bt,              # numpy HWC uint8
+            "image": img,              # numpy HWC uint8
             "condition": state.condition,  # Dict[str, Any]
         }
 
+        
         # step inference
         action, new_state_in = self.model.get_action(
             input=input_dict,
