@@ -10,6 +10,11 @@ def build_steve1_obs(obs: Dict[str, Any]) -> Dict[str, Any]:
 
     Input:
       obs["image"]: HxWx3 uint8 RGB
+    Output:
+      Dict with "image" key containing HxWx3 numpy array
+    
+    IMPORTANT: Do NOT add batch/time dimensions here!
+    The minestudio model with input_shape="*" handles dimension expansion automatically.
     """
     if "image" not in obs:
         raise KeyError("obs must contain 'image'")
@@ -23,7 +28,4 @@ def build_steve1_obs(obs: Dict[str, Any]) -> Dict[str, Any]:
     if image.dtype != np.uint8:
         image = image.astype(np.uint8, copy=False)
 
-    return {
-        "image": image,
-        "pov": image,
-    }
+    return {"image": image}
