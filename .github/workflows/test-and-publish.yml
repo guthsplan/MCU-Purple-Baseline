@@ -63,7 +63,7 @@ jobs:
         run: |
           echo "$SECRETS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
           docker run -d -p 9009:9009 --name agent-container-vpt --env-file .env $(echo "${{ steps.meta-vpt.outputs.tags }}" | head -n1) --host 0.0.0.0 --port 9009
-          timeout 120 bash -c 'until curl -sf http://localhost:9009/.well-known/agent-card.json > /dev/null; do sleep 1; done'
+          timeout 300 bash -c 'until curl -sf http://localhost:9009/.well-known/agent-card.json > /dev/null; do sleep 2; done'
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v4
@@ -155,7 +155,7 @@ jobs:
         run: |
           echo "$SECRETS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
           docker run -d -p 9009:9009 --name agent-container-steve1 --env-file .env $(echo "${{ steps.meta-steve1.outputs.tags }}" | head -n1) --host 0.0.0.0 --port 9009
-          timeout 120 bash -c 'until curl -sf http://localhost:9009/.well-known/agent-card.json > /dev/null; do sleep 1; done'
+          timeout 300 bash -c 'until curl -sf http://localhost:9009/.well-known/agent-card.json > /dev/null; do sleep 2; done'
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v4
@@ -247,7 +247,7 @@ jobs:
         run: |
           echo "$SECRETS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
           docker run -d -p 9009:9009 --name agent-container-rocket1 --env-file .env $(echo "${{ steps.meta-rocket1.outputs.tags }}" | head -n1) --host 0.0.0.0 --port 9009
-          timeout 120 bash -c 'until curl -sf http://localhost:9009/.well-known/agent-card.json > /dev/null; do sleep 1; done'
+          timeout 300 bash -c 'until curl -sf http://localhost:9009/.well-known/agent-card.json > /dev/null; do sleep 2; done'
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v4
@@ -339,7 +339,7 @@ jobs:
         run: |
           echo "$SECRETS_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > .env
           docker run -d -p 9009:9009 --name agent-container-groot1 --env-file .env $(echo "${{ steps.meta-groot1.outputs.tags }}" | head -n1) --host 0.0.0.0 --port 9009
-          timeout 120 bash -c 'until curl -sf http://localhost:9009/.well-known/agent-card.json > /dev/null; do sleep 1; done'
+          timeout 300 bash -c 'until curl -sf http://localhost:9009/.well-known/agent-card.json > /dev/null; do sleep 2; done'
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v4

@@ -73,10 +73,11 @@ def download_steve1_models(device: Optional[str] = None) -> None:
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    logger.info("Pre-downloading STEVE-1 model: CraftJarvis/MineStudio_STEVE-1.12w_EMA")
+    # Use the same model ID as in Steve1Agent
+    logger.info("Pre-downloading STEVE-1 model: CraftJarvis/MineStudio_STEVE-1.official")
     try:
         model = SteveOnePolicy.from_pretrained(
-            "CraftJarvis/MineStudio_STEVE-1.12w_EMA"
+            "CraftJarvis/MineStudio_STEVE-1.official"
         )
         logger.info("STEVE-1 model downloaded successfully")
         del model
