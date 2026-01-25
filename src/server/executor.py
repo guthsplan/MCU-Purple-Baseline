@@ -52,12 +52,14 @@ class Executor(AgentExecutor):
         sessions: SessionManager,
         agent_name: str,
         *,
+        deterministic: bool = False,
         state_ttl_seconds: Optional[int] = 60 * 60,
         debug: bool = False,
         device: Optional[str] = None,
     ) -> None:
         self.sessions = sessions
         self.agent_name = agent_name
+        self.deterministic = deterministic
         self._state_ttl_seconds = state_ttl_seconds
         self._debug = bool(debug)
         self._device = device
@@ -266,7 +268,7 @@ class Executor(AgentExecutor):
                 action, new_state = agent.act(
                     obs=obs_dict,
                     state=state,
-                    deterministic=True,
+                    deterministic=self.deterministic,
                 )
                 # Update state
                 self.agent_states[context_id] = new_state

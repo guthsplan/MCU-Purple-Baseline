@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--port", type=int, default=9019)
     parser.add_argument("--card-url", type=str, help="URL to advertise in the agent card")
     parser.add_argument("--agent", default="steve1")
+    parser.add_argument("--deterministic", action="store_true", default=False)
     parser.add_argument("--device", default=None)
     parser.add_argument("--state-ttl", type=int, default=3600)
     args = parser.parse_args()
@@ -62,6 +63,7 @@ def main():
         sessions=sessions,
         agent_name=args.agent,
         device=args.device,
+        deterministic=args.deterministic,
         state_ttl_seconds=args.state_ttl,
         debug=True,
     )
