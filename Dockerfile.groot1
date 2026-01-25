@@ -31,9 +31,9 @@ RUN \
     --mount=type=cache,target=/home/agent/.cache/uv,uid=1000 \
     uv sync --locked
 
-# pre-download Steve1 models from Hugging Face during build
+# pre-download Groot1 models from Hugging Face during build
 # Note: Do NOT use --mount=type=cache here, as we need models to persist in the image
-RUN uv run python -m src.agent.download --agent steve1 --device cpu
+RUN uv run python -m src.agent.download --agent groot1 --device cpu
 
 EXPOSE 9009
-ENTRYPOINT ["uv", "run", "python", "-m", "src.server.app", "--agent", "steve1"]
+ENTRYPOINT ["uv", "run", "python", "-m", "src.server.app", "--agent", "groot1"]
