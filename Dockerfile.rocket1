@@ -36,4 +36,4 @@ RUN \
 RUN uv run python -m src.agent.download --agent rocket1 --device cpu
 
 EXPOSE 9009
-ENTRYPOINT ["uv", "run", "python", "-m", "src.server.app_rocket1", "--agent", "rocket1"]
+ENTRYPOINT ["uv", "run", "python", "-m", "src.server.app", "--agent", "rocket1"]
