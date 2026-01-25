@@ -4,6 +4,7 @@ from .noop import NoOpAgent
 from .vpt import VPTAgent
 from .rocket1 import Rocket1Agent
 from .steve1 import Steve1Agent
+from .groot1 import Groot1Agent
 from .llm import LLMAgent
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "VPTAgent",
     "Rocket1Agent",
     "Steve1Agent",
+    "Groot1Agent",
     "LLMAgent",
 ]

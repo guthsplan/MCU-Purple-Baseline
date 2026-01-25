@@ -37,107 +37,27 @@ class Rocket1Agent(BaseAgent):
         
         task_text: Optional task description (ignored for Rocket-1, included for BaseAgent compatibility)
         """
-        return RocketState(memory=None, first=True)
+        state_in = self.model.initial_state(batch_size=1)
+        return RocketState(memory=state_in, first=True)
 
     @torch.inference_mode()
     def _act_impl(
         self,
         obs: Dict[str, Any],
         state: RocketState,
-        deterministic: bool = True,
+        deterministic: bool = False,
     ) -> Tuple[Dict[str, Any], RocketState]:
-        """
-        Core action generation logic.
-        """
-        try:
-            logger.info(f"[ROCKET1_ACT] Starting _act_impl")
-            logger.info(f"[ROCKET1_ACT] obs type: {type(obs)}")
-            logger.info(f"[ROCKET1_ACT] obs keys: {list(obs.keys())}")
-            if "image" in obs:
-                logger.info(f"[ROCKET1_ACT] obs['image'] type: {type(obs['image'])}, isinstance(list)={isinstance(obs['image'], list)}")
-            logger.info(f"[ROCKET1_ACT] state type: {type(state)}, state.first={state.first}, memory is None={state.memory is None}")
-            
-            from .input_validator import validate_rocket_input, validate_model_output
-            
-            # Preprocess observation to model input format
-            logger.info(f"[ROCKET1_ACT] Calling build_rocket_input...")
-            rocket_input = build_rocket_input(obs, self.device)
-            logger.info(f"[ROCKET1_ACT] build_rocket_input returned successfully")
-            logger.info(f"[ROCKET1_ACT] rocket_input keys: {list(rocket_input.keys())}")
-            logger.info(f"[ROCKET1_ACT] rocket_input['image'] type: {type(rocket_input['image'])}, shape: {rocket_input['image'].shape if hasattr(rocket_input['image'], 'shape') else 'N/A'}")
-            logger.info(f"[ROCKET1_ACT] rocket_input['segment'] type: {type(rocket_input['segment'])}")
-            if isinstance(rocket_input['segment'], dict):
-                logger.info(f"[ROCKET1_ACT] rocket_input['segment'] keys: {list(rocket_input['segment'].keys())}")
-                for key in rocket_input['segment']:
-                    val = rocket_input['segment'][key]
-                    logger.info(f"[ROCKET1_ACT]   segment['{key}'] type: {type(val)}, isinstance Tensor: {isinstance(val, torch.Tensor)}")
-                    if isinstance(val, torch.Tensor):
-                        logger.info(f"[ROCKET1_ACT]   segment['{key}'] shape: {val.shape}, dtype: {val.dtype}")
-            
-            # Validate input before passing to model
-            logger.info(f"[ROCKET1_ACT] Validating rocket_input...")
-            validate_rocket_input(rocket_input, stage="agent-act-pre-model")
-            logger.info(f"[ROCKET1_ACT] Input validation passed")
-            
-            # Forward pass through model
-            logger.info(f"[ROCKET1_ACT] Calling model forward...")
-            latents, new_memory = self.model(
-                input=rocket_input,
-                memory=state.memory,
-            )
-            logger.info(f"[ROCKET1_ACT] Model forward returned successfully")
-            
-            # Validate output from model
-            logger.info(f"[ROCKET1_ACT] Validating model output...")
-            validate_model_output(latents, new_memory, stage="agent-act-post-model")
-            logger.info(f"[ROCKET1_ACT] Output validation passed")
-            
-            # Extract policy logits from output
-            pi_logits = latents["pi_logits"]
-            logger.info(f"[ROCKET1_ACT] pi_logits keys: {list(pi_logits.keys())}")
-            
-            # Decode logits to action - OUTPUT COMPACT FORMAT (len==1)
-            logger.info(f"[ROCKET1_ACT] Decoding actions...")
-            btn = pi_logits["buttons"].detach().cpu().view(-1)
-            buttons_expanded = (btn > 0).long().tolist()
-            buttons_expanded = (buttons_expanded + [0] * 20)[:20]
-            
-            cam = pi_logits["camera"].detach().cpu().view(-1)[:2]
-            cam = torch.clamp(cam, -1.0, 1.0)
-            camera_continuous = [float(cam[0]), float(cam[1])]
-            
-            # Convert to compact format (len==1) for simulator compatibility
-            # Buttons: Count the number of pressed buttons as action index (0-20)
-            button_action_idx = sum(buttons_expanded)
-            
-            # Camera: Discretize continuous camera values to integer bin
-            # Map [-1.0, 1.0] to [0, 120] range (standard for MineStudio)
-            camera_yaw = int((camera_continuous[0] + 1.0) / 2.0 * 120)
-            camera_yaw = max(0, min(120, camera_yaw))  # Clamp to valid range
-            
-            action = {
-                "buttons": [button_action_idx],  # Compact: single value
-                "camera": [camera_yaw],           # Compact: single discretized value
-            }
-            logger.info(f"[ROCKET1_ACT] Action decoded (COMPACT): buttons={action['buttons']}, camera={action['camera']}")
-
-            
-            # Update state with new recurrent memory
-            new_state = RocketState(
-                memory=new_memory,
-                first=False,
-            )
-            
-            logger.info(f"[ROCKET1_ACT] SUCCESS - returning action and new_state")
-            return action, new_state
-            
-        except Exception as e:
-            logger.error(f"[ROCKET1_ACT] EXCEPTION: {type(e).__name__}: {str(e)}", exc_info=True)
-            # Fallback to safe action on any error
-            action = {
-                "buttons": [0] * 20,
-                "camera": [0.0, 0.0],
-            }
-            new_state = RocketState(memory=state.memory, first=False)
-            logger.info(f"[ROCKET1_ACT] Returning fallback safe action due to exception")
-            return action, new_state
+        
+        input_dict = build_rocket_input(obs, self.device)
+        
+        action, new_state_in = self.model.get_action(
+            input=input_dict,
+            state_in=state.memory,
+            deterministic=deterministic,
+        )
+        
+        new_state = RocketState(memory=new_state_in, first=False)
+        action["buttons"] = action["buttons"].cpu().numpy().tolist()
+        action["camera"] = action["camera"].cpu().numpy().tolist()
+        return action, new_state
+    

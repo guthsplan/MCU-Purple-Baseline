@@ -20,6 +20,7 @@ def build_agent(
           - "vpt"
           - "steve1"
           - "rocket1"
+          - "groot1"
           - "llm"
 
     device : Optional[str]
@@ -60,6 +61,11 @@ def build_agent(
         from src.agent.rocket1.agent import Rocket1Agent
         return Rocket1Agent(device=device, **kwargs)
 
+    # Groot-1 (Video-conditioned) agent
+    if name == "groot1":
+        from src.agent.groot1.agent import Groot1Agent
+        return Groot1Agent(device=device, **kwargs)
+
     # LLM-based agent (planning / reasoning baselines)
     if name == "llm": 
         from src.agent.llm.agent import LLMAgent
@@ -70,5 +76,5 @@ def build_agent(
     # ------------------------------------------------------------------
     raise ValueError(
         f"Unknown agent: {agent_name!r}. "
-        f"Supported agents: noop, vpt, steve1, rocket1, llm."
+        f"Supported agents: noop, vpt, steve1, rocket1, groot1, llm."
     )

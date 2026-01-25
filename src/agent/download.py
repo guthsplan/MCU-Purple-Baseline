@@ -63,22 +63,70 @@ def download_vpt_models(
             raise
 
 
-def download_steve1_models() -> None:
+def download_steve1_models(device: Optional[str] = None) -> None:
     """
-    Pre-download STEVE-1 models if needed.
-    TODO: Implement based on steve1 agent requirements
+    Pre-download STEVE-1 models from Hugging Face.
     """
-    logger.info("STEVE-1 model download not implemented yet")
-    pass
+    import torch
+    from minestudio.models.steve_one.body import SteveOnePolicy
+    
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    logger.info("Pre-downloading STEVE-1 model: CraftJarvis/MineStudio_STEVE-1.12w_EMA")
+    try:
+        model = SteveOnePolicy.from_pretrained(
+            "CraftJarvis/MineStudio_STEVE-1.12w_EMA"
+        )
+        logger.info("STEVE-1 model downloaded successfully")
+        del model
+    except Exception as e:
+        logger.error("Failed to download STEVE-1 model: %s", e)
+        raise
 
 
-def download_rocket1_models() -> None:
+def download_rocket1_models(device: Optional[str] = None) -> None:
     """
-    Pre-download Rocket-1 models if needed.
-    TODO: Implement based on rocket1 agent requirements
+    Pre-download Rocket-1 models from Hugging Face.
     """
-    logger.info("Rocket-1 model download not implemented yet")
-    pass
+    import torch
+    from minestudio.models.rocket_one.body import RocketPolicy
+    
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    logger.info("Pre-downloading Rocket-1 model: CraftJarvis/MineStudio_ROCKET-1.12w_EMA")
+    try:
+        model = RocketPolicy.from_pretrained(
+            "CraftJarvis/MineStudio_ROCKET-1.12w_EMA"
+        )
+        logger.info("Rocket-1 model downloaded successfully")
+        del model
+    except Exception as e:
+        logger.error("Failed to download Rocket-1 model: %s", e)
+        raise
+
+
+def download_groot1_models(device: Optional[str] = None) -> None:
+    """
+    Pre-download Groot-1 models from Hugging Face.
+    """
+    import torch
+    from minestudio.models.groot_one.body import GrootPolicy
+    
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    logger.info("Pre-downloading Groot-1 model: CraftJarvis/MineStudio_GROOT.18w_EMA")
+    try:
+        model = GrootPolicy.from_pretrained(
+            "CraftJarvis/MineStudio_GROOT.18w_EMA"
+        )
+        logger.info("Groot-1 model downloaded successfully")
+        del model
+    except Exception as e:
+        logger.error("Failed to download Groot-1 model: %s", e)
+        raise
 
 
 def download_models_for_agent(agent_name: str, device: Optional[str] = None) -> None:
@@ -97,9 +145,11 @@ def download_models_for_agent(agent_name: str, device: Optional[str] = None) -> 
     if name == "vpt":
         download_vpt_models(device=device)
     elif name == "steve1":
-        download_steve1_models()
+        download_steve1_models(device=device)
     elif name == "rocket1":
-        download_rocket1_models()
+        download_rocket1_models(device=device)
+    elif name == "groot1":
+        download_groot1_models(device=device)
     elif name == "noop":
         logger.info("NoOp agent doesn't require model downloads")
     elif name == "llm":
@@ -122,7 +172,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--agent",
         default="vpt",
-        choices=["vpt", "steve1", "rocket1", "noop", "llm"],
+        choices=["vpt", "steve1", "rocket1", "groot1", "noop", "llm"],
         help="Agent type to download models for",
     )
     parser.add_argument(

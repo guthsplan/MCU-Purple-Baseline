@@ -18,23 +18,11 @@ from src.protocol.models import (
     ActionPayload,
 )
 from .model import Steve1State
-from .preprocess import build_steve1_obs 
+from .preprocess import build_steve1_input 
 
 logger = logging.getLogger("purple.steve1")
 
 
-# -------------------------
-# Context store
-# -------------------------
-@dataclass
-class _Context:
-    task_text: str
-    state: Steve1State
-
-
-# -------------------------
-# STEVE-1 Policy wrapper 
-# -------------------------
 class Steve1Agent(BaseAgent):
     """
     Docstring for Steve1Agent
@@ -84,23 +72,11 @@ class Steve1Agent(BaseAgent):
         return Steve1State(condition=condition, state_in=state_in, first=True)
 
     @torch.inference_mode()
-    def act(
-        self,
-        obs: Dict[str, Any],
-        state: Steve1State,
-        deterministic: bool = True,
-    ) -> Tuple[Dict[str, Any], Steve1State]:
-        """
-        Public entrypoint: calls internal impl.
-        """
-        return self._act_impl(obs=obs, state=state, deterministic=deterministic)
-
-    @torch.inference_mode()
     def _act_impl(
         self,
         obs: Dict[str, Any],
         state: Steve1State,
-        deterministic: bool = True,
+        deterministic: bool = False,
     ) -> Tuple[Dict[str, Any], Steve1State]:
         """
         Step inference.
@@ -111,21 +87,7 @@ class Steve1Agent(BaseAgent):
               camera:  [int]  (len=1)
         """
         # preprocess obs
-        steve_obs = build_steve1_obs(obs)
-        img = steve_obs["image"]  # HWC uint8 numpy
-
-        img = torch.tensor(img, dtype=torch.uint8, device=self.device)
-        if img.ndim == 3:
-            img = img[None, None, ...]
-        elif img.ndim == 4:
-            img = img[None, ...]
-
-        # input dict expected by SteveOnePolicy.get_action
-        input_dict = {
-            "image": img,              # numpy HWC uint8
-            "condition": state.condition,  # Dict[str, Any]
-        }
-
+        input_dict = build_steve1_input(obs, state.condition, self.device)
         
         # step inference
         action, new_state_in = self.model.get_action(
@@ -134,122 +96,8 @@ class Steve1Agent(BaseAgent):
             deterministic=deterministic,
         )
         
-        # postprocess action tokens 
-        buttons = action.get("buttons")
-        camera = action.get("camera")
-
-        if buttons is None or camera is None:
-            raise KeyError("Action must contain 'buttons' and 'camera'")
-
-        # tensors -> numpy
-        if isinstance(buttons, torch.Tensor):
-            buttons = buttons.detach().cpu().numpy()
-        if isinstance(camera, torch.Tensor):
-            camera = camera.detach().cpu().numpy()
-
-        # batch dim elimination
-        if getattr(buttons, "ndim", 0) > 1 and buttons.shape[0] > 1:
-            buttons = buttons[0]
-        if getattr(camera, "ndim", 0) > 1 and camera.shape[0] > 1:
-            camera = camera[0]
-
-        # convert to int tokens
-        buttons_token = _as_int_token(buttons)
-        camera_token = _as_int_token(camera)
-
-        action_dict = {"buttons": [buttons_token], "camera": [camera_token]}
-
         new_state = Steve1State(condition=state.condition, state_in=new_state_in, first=False)
-        return action_dict, new_state
+        action["buttons"] = action["buttons"].cpu().numpy().tolist()
+        action["camera"] = action["camera"].cpu().numpy().tolist()
+        return action, new_state
 
-
-# -------------------------
-# Protocol handler 
-# -------------------------
-class Steve1ProtocolHandler:
-    """
-    Handle init/obs messages for STEVE-1 agent protocol.    
-    """
-
-    def __init__(self, agent: Steve1Agent) -> None:
-        self.agent = agent
-        self._contexts: Dict[str, _Context] = {}
-
-    def handle_init(self, context_id: str, payload: InitPayload) -> AckPayload:
-        if not context_id:
-            raise ValueError("context_id is required")
-        task_text = payload.text
-        state = self.agent.initial_state(task_text=task_text)
-        self._contexts[context_id] = _Context(task_text=task_text, state=state)
-        return AckPayload(success=True, message="initialized")
-
-    def handle_obs(self, context_id: str, payload: ObservationPayload) -> ActionPayload:
-        if not context_id:
-            raise ValueError("context_id is required")
-        ctx = self._contexts.get(context_id)
-        if ctx is None:
-            raise RuntimeError(f"Received obs before init for context_id={context_id}")
-
-        image = _decode_base64_rgb(payload.obs)
-
-        obs_dict = {"image": image, "step": payload.step}
-
-        action_dict, new_state = self.agent.act(obs=obs_dict, state=ctx.state, deterministic=True)
-        ctx.state = new_state
-
-        return ActionPayload(
-            action_type="agent",
-            buttons=action_dict["buttons"],
-            camera=action_dict["camera"],
-        )
-
-    def reset_context(self, context_id: str) -> None:
-        self._contexts.pop(context_id, None)
-    
-    def has_context(self, context_id: str) -> bool:
-        return context_id in self._contexts
-
-# -------------------------
-# Helpers
-# -------------------------
-
-def _as_int_token(x: Any) -> int:
-    """
-    Convert a model output into a single integer token.
-    Accepts: int/float scalar, numpy scalar, list/tuple/np.ndarray with at least 1 element.
-    """
-    if isinstance(x, (list, tuple)):
-        if len(x) == 0:
-            raise ValueError("Empty token container")
-        return int(x[0])
-
-    if isinstance(x, np.ndarray):
-        if x.size == 0:
-            raise ValueError("Empty token ndarray")
-        return int(x.reshape(-1)[0])
-
-    # numpy scalar
-    if isinstance(x, (np.integer,)):
-        return int(x)
-    if isinstance(x, (np.floating,)):
-        return int(x)
-
-    # python scalar
-    if isinstance(x, bool):
-        return int(x)
-    if isinstance(x, (int, float)):
-        return int(x)
-
-    raise TypeError(f"Cannot convert token from type={type(x)} value={x}")
-
-def _decode_base64_rgb(b64_str: str) -> np.ndarray:
-    """
-    Decode base64-encoded RGB image to uint8 numpy array (HWC).
-    """
-    from PIL import Image
-    import io
-
-    raw = base64.b64decode(b64_str)
-    img = Image.open(io.BytesIO(raw)).convert("RGB")
-    arr = np.asarray(img, dtype=np.uint8)
-    return arr

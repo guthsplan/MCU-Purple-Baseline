@@ -1,21 +1,11 @@
 from __future__ import annotations
-
 from typing import Any, Dict
+
 import numpy as np
+import torch
 
 
-def build_steve1_obs(obs: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Convert Purple-style obs dict to STEVE-1 compatible obs.
-
-    Input:
-      obs["image"]: HxWx3 uint8 RGB
-    Output:
-      Dict with "image" key containing HxWx3 numpy array
-    
-    IMPORTANT: Do NOT add batch/time dimensions here!
-    The minestudio model with input_shape="*" handles dimension expansion automatically.
-    """
+def build_steve1_input(obs: Dict[str, Any], condition: Dict[str, Any], device: torch.device) -> Dict[str, Any]:
     if "image" not in obs:
         raise KeyError("obs must contain 'image'")
 
@@ -27,5 +17,11 @@ def build_steve1_obs(obs: Dict[str, Any]) -> Dict[str, Any]:
 
     if image.dtype != np.uint8:
         image = image.astype(np.uint8, copy=False)
+    
+    image = torch.tensor(image, dtype=torch.uint8, device=device)
+    if image.ndim == 3:
+        image = image[None, None, ...]
+    elif image.ndim == 4:
+        image = image[None, ...]
 
-    return {"image": image}
+    return {"image": image, "condition": condition}

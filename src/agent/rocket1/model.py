@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from src.agent.base import AgentState
 
@@ -12,6 +12,6 @@ class RocketState(AgentState):
     memory: Recurrent state from the Rocket-1 model
     first: Indicates if this is the first step in the episode
     """
-    memory: Any = None
+    memory: Optional[Any] = None
     first: bool = True
 

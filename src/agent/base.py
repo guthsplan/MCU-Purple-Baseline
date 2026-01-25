@@ -51,7 +51,7 @@ class BaseAgent(ABC):
         self,
         obs: Dict[str, Any],
         state: AgentState,
-        deterministic: bool = True,
+        deterministic: bool = False,
     ) -> Tuple[Any, AgentState]:
         """
         Public entrypoint called by Executor.
