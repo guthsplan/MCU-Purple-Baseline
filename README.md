@@ -9,7 +9,7 @@ This repository provides a reference implementation of an A2A-compliant policy s
 The Purple Agent is responsible for:
 - **Task Initialization**: Receive task instructions (e.g., "craft oak planks") and prepare internal state
 - **Perception**: Decode observation images (128×128 RGB) from the environment
-- **Decision Making**: Execute policies (Rocket-1, VPT, STEVE-1, or custom) to generate actions
+- **Decision Making**: Execute policies (Rocket-1, Groot-1, VPT, STEVE-1, or custom) to generate actions
 - **Action Output**: Return standardized action formats (buttons + camera controls)
 
 All communication follows the **A2A protocol** with JSON message contracts, enabling seamless integration with:
@@ -20,7 +20,7 @@ All communication follows the **A2A protocol** with JSON message contracts, enab
 ### Key Features
 
 ✅ **A2A-compliant** - Agent Card + standard message endpoints  
-✅ **Multiple Policies** - Rocket-1, VPT, STEVE-1, NoOp, LLM (experimental)  
+✅ **Multiple Policies** - Rocket-1, Groot-1, VPT, STEVE-1, NoOp, LLM (experimental)  
 ✅ **Robust Observation Handling** - Base64 decoding, image validation, preprocessing  
 ✅ **Session Management** - Per-context state tracking with TTL garbage collection  
 ✅ **Evaluator-Safe** - Standardized action format (23 buttons + 2-D camera)  
@@ -66,7 +66,8 @@ python -m src.server.app --host 0.0.0.0 --port 9019 --agent steve1
 **Available policies:**
 - `rocket1` (default) - Pretrained Rocket-1 via Hugging Face
 - `vpt` - MineStudio VPT policy
-- `steve1` - MineStudio STEVE-1 policy  
+- `steve1` - MineStudio STEVE-1 policy
+- `groot1` - MineStudio Groot-1 video-conditioned policy
 - `noop` - No-op baseline (returns [0, 0, ..., 0, 0])
 - `llm` - Experimental LLM-based policy (requires `OPENAI_API_KEY`)
 
@@ -214,6 +215,11 @@ MCU-Purple-Baseline/
 │   │   ├── download.py
 │   │   ├── noop.py
 │   │   ├── registry.py
+│   │   ├── groot1/
+│   │   │   ├── __init__.py
+│   │   │   ├── agent.py
+│   │   │   ├── model.py
+│   │   │   └── preprocess.py
 │   │   ├── llm/
 │   │   │   ├── __init__.py
 │   │   │   ├── action_map.py
